@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KOSPI200 선물 — LS.Futures</title>
+<style>
+  :root{--bg:#0a0b0f;--card:#12141c;--bd:#232636;--tx:#dfe3ee;--dim:#8a90a6;--red:#e05a5a;--grn:#3dd68c;--acc:#5b8cff;--yel:#e0b34a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font:13px/1.45 'SF Mono','Consolas',ui-monospace,monospace;padding:12px}
+  .num{font-variant-numeric:tabular-nums}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  header h1{font-size:16px;font-weight:700}
+  .badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700}
+  .b-live{background:var(--grn);color:#08150e}.b-off{background:#333a4e;color:var(--dim)}
+  .b-bear{background:var(--red);color:#1a0808}.b-gap{background:var(--yel);color:#1a1305;animation:blink 1s infinite}
+  .inst{padding:3px 12px;border-radius:8px;font-size:12px;font-weight:700;background:#1a1d2a;color:var(--dim);border:1px solid var(--bd);cursor:pointer}
+  .inst.on{background:var(--acc);color:#0a0b0f;border-color:var(--acc)}
+  .inst .r{font-size:10px;font-weight:400;margin-left:4px;opacity:.75}
+  @keyframes blink{50%{opacity:.45}}
+  .cols{display:grid;grid-template-columns:380px minmax(0,1fr) 380px;gap:12px}
+  @media(max-width:1200px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:12px;min-width:0;overflow:hidden}
+  .card h2{font-size:12px;color:var(--dim);margin-bottom:8px;letter-spacing:.5px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  td,th{padding:2px 6px;text-align:right;white-space:nowrap}
+  th{color:var(--dim);font-weight:400;border-bottom:1px solid var(--bd)}
+  /* 한국 HTS 관례: 상승·매수=빨강 / 하락·매도=파랑 */
+  .ask{color:var(--acc)}.bid{color:var(--red)}
+  .bar{display:inline-block;height:9px;border-radius:2px;vertical-align:middle}
+  .mid-row td{text-align:center;color:var(--dim);border-top:1px dashed var(--bd);border-bottom:1px dashed var(--bd);padding:4px;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:0}
+  .bar{max-width:64px}
+  .hts{table-layout:fixed;width:100%}
+  .hts .qty-a,.hts .qty-b{overflow:hidden;white-space:nowrap}
+  /* HTS풍 호가 */
+  .hts-head{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+  .hts td{padding:3px 6px}
+  .hts .ask-zone{background:rgba(91,140,255,.07)}
+  .hts .bid-zone{background:rgba(224,90,90,.07)}
+  .hts .px{text-align:center;font-weight:600;min-width:104px}
+  .hts .px .pct{font-size:10.5px;font-weight:400;margin-left:5px}
+  .hts .qty-a{text-align:right}.hts .qty-b{text-align:left}
+  .hts .cnt{font-size:10px;color:var(--dim);margin:0 4px}
+  .hts .cur td{border:1px solid var(--yel);font-weight:700}
+  .tape{max-height:300px;overflow-y:auto}
+  .tape .row{display:flex;gap:8px;padding:1px 2px;border-bottom:1px solid rgba(255,255,255,.03)}
+  .tape .t{color:var(--dim);width:104px;flex-shrink:0}.tape .p{width:78px;text-align:right;flex-shrink:0}.tape .v{width:50px;text-align:right;color:var(--dim);flex-shrink:0}
+  .gauge{position:relative;height:20px;background:#1a1d2a;border-radius:10px;overflow:hidden;margin:6px 0}
+  .gauge .fill{position:absolute;top:0;bottom:0;transition:all .2s}
+  .gauge .zero{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--dim)}
+  .gauge .val{position:absolute;width:100%;text-align:center;font-size:11px;line-height:20px;font-weight:700}
+  .feat{display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px}
+  .feat .k{width:92px;color:var(--dim)}
+  .feat .track{flex:1;height:8px;background:#1a1d2a;border-radius:4px;position:relative;overflow:hidden}
+  .feat .track .f{position:absolute;top:0;bottom:0}
+  .feat .v{width:64px;text-align:right}
+  .kv{display:flex;justify-content:space-between;padding:2px 0}
+  .kv .k{color:var(--dim)}
+  .modes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mode-card{background:#161927;border:1px solid var(--bd);border-radius:8px;padding:8px}
+  .mode-card h3{font-size:12px;margin-bottom:5px}
+  .pos{color:var(--grn)}.neg{color:var(--red)}
+  .fills{max-height:240px;overflow-y:auto}
+  .logs{max-height:150px;overflow-y:auto;font-size:11px;color:var(--dim)}
+  .note{font-size:11px;color:var(--yel);margin-top:6px}
+  .empty{color:var(--dim);text-align:center;padding:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>선물</h1>
+  <span id="instTabs" style="display:flex;gap:6px"></span>
+  <span id="contract" class="num">—</span>
+  <span id="connBadge" class="badge b-off">연결 대기</span>
+  <span id="bearBadge" class="badge b-bear" style="display:none">BEAR</span>
+  <span id="gapBadge" class="badge b-gap" style="display:none">⚡ 변동성 갭</span>
+  <span style="margin-left:auto;color:var(--dim);font-size:11px" id="stat">—</span>
+</header>
+
+<div class="cols">
+  <!-- 좌: 호가 DOM + 체결 테이프 -->
+  <div>
+    <div class="card">
+      <h2>호가 (FH9 · 5단)</h2>
+      <div class="hts-head">
+        <span id="curPrice" class="num" style="font-size:20px;font-weight:700">—</span>
+        <span id="curChange" class="num" style="font-size:13px">—</span>
+      </div>
+      <table class="hts"><thead><tr><th style="text-align:right">매도잔량</th><th style="text-align:center">가격</th><th style="text-align:left">매수잔량</th></tr></thead>
+      <tbody id="dom"><tr><td class="empty" colspan="3">수신 대기</td></tr></tbody></table>
+      <div class="kv" style="margin-top:6px"><span class="k">총잔량 매도/매수</span><span class="num" id="totRem">—</span></div>
+    </div>
+    <div class="card">
+      <h2>체결 테이프 (FC9)</h2>
+      <div class="tape" id="tape"><div class="empty">수신 대기</div></div>
+    </div>
+  </div>
+
+  <!-- 중: 차트 + 알고리즘 -->
+  <div>
+    <div class="card">
+      <h2 id="chartTitle">당일 차트 — 선물가 <span style="color:var(--acc)">━</span> · K200 지수 <span style="color:var(--dim)">┄</span></h2>
+      <canvas id="chart" width="640" height="180" style="width:100%;height:180px"></canvas>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim)"><span id="chartL">—</span><span id="chartR">—</span></div>
+    </div>
+    <div class="card">
+      <h2>신호 스코어 (v0 규칙 게이트)</h2>
+      <div class="gauge"><div class="zero"></div><div class="fill" id="scoreFill"></div><div class="val num" id="scoreVal">0.00</div></div>
+      <div style="font-size:11px;color:var(--dim)" id="breakdown">—</div>
+      <div class="note" id="paramsLabel">—</div>
+    </div>
+    <div class="card">
+      <h2>피처 (스트리밍)</h2>
+      <div id="feats"></div>
+      <div class="kv" style="margin-top:6px"><span class="k">mid / micro편차(틱) / 스프레드</span><span class="num" id="midLine">—</span></div>
+      <div class="kv"><span class="k">10초 RV z / OFI 5s z</span><span class="num" id="zLine">—</span></div>
+    </div>
+    <div class="card" id="basisCard">
+      <h2 id="basisTitle">베이시스 (FC9 틱 내장)</h2>
+      <div class="kv"><span class="k" id="basisK1">K200 지수 / 이론가</span><span class="num" id="basis1">—</span></div>
+      <div class="kv"><span class="k" id="basisK2">괴리율 / basis z</span><span class="num" id="basis2">—</span></div>
+      <div class="kv"><span class="k" id="basisK3">시장 BASIS / 이론 BASIS</span><span class="num" id="basis3">—</span></div>
+      <div class="kv"><span class="k">미결제약정 / 체결강도</span><span class="num" id="basis4">—</span></div>
+    </div>
+    <div class="card">
+      <h2>엔진 로그</h2>
+      <div class="logs" id="logs"></div>
+    </div>
+  </div>
+
+  <!-- 우: 가상매매 (shadow) -->
+  <div>
+    <div class="card">
+      <h2>가상 포지션 · PnL (shadow — 실주문 0)</h2>
+      <div class="modes" id="modes"></div>
+    </div>
+    <div class="card">
+      <h2>가상 체결 이력</h2>
+      <div class="fills">
+        <table>
+          <thead><tr><th>시각</th><th>M</th><th>방향</th><th>유형</th><th>가격</th><th>틱</th></tr></thead>
+          <tbody id="fills"><tr><td class="empty" colspan="6">체결 없음</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>수집 상태</h2>
+      <div class="kv"><span class="k">체결 / 호가 수신</span><span class="num" id="cnt">—</span></div>
+      <div class="kv"><span class="k">초당 수신률</span><span class="num" id="rate">—</span></div>
+      <div class="kv"><span class="k">DB / 기록오류</span><span class="num" id="db">—</span></div>
+      <div class="kv"><span class="k">가동</span><span class="num" id="up">—</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var $=function(id){return document.getElementById(id)};
+var SYM='';   // 선택 종목 (빈값=서버 기본: 국내 미니 우선)
+function q(){return SYM?('?sym='+encodeURIComponent(SYM)):''}
+function nf(x){return (x==null||isNaN(x))?'—':Number(x).toLocaleString()}
+function f2(x){return (x==null||isNaN(x))?'—':Number(x).toFixed(2)}
+function cls(v){return v>0?'pos':(v<0?'neg':'')}
+
+function render(s){
+  var c=s.contract||{};
+  // 종목 탭 (초당 수신률 병기)
+  var insts=s.instruments||[];
+  $('instTabs').innerHTML=insts.map(function(it){
+    var on=it.code===c.futcode;
+    return '<span class="inst'+(on?' on':'')+'" onclick="pick(\''+it.code+'\')">'+(it.name||it.code)+'<span class="r">'+nf(it.tickRate)+'/s</span></span>';
+  }).join('');
+  $('contract').textContent=(c.futcode||'—');
+  var b=s.boot||{};
+  $('connBadge').textContent=b.loggedIn?('LIVE ('+b.loginCode+')'):'미연결';
+  $('connBadge').className='badge '+(b.loggedIn?'b-live':'b-off');
+  var f=s.features||{};
+  $('bearBadge').style.display=f.bear?'':'none';
+  $('gapBadge').style.display=f.gapFlag?'':'none';
+
+  var col=s.collect||{};
+  $('stat').textContent=(f.stamp||'')+' · tick '+nf(col.tickRate)+'/s';
+  $('cnt').textContent=nf(col.tickCount)+' / '+nf(col.depthCount);
+  $('rate').textContent=nf(col.tickRate)+' / '+nf(col.depthRate);
+  $('db').textContent=(col.dbBytes!=null?(col.dbBytes/1048576).toFixed(1)+' MB':'—')+' / '+nf(col.insertErrors);
+  $('up').textContent=b.startedAt+' 부터 '+Math.floor((b.uptimeSec||0)/60)+'분';
+
+  // HTS풍 호가 래더: [매도잔량+건수] [가격+등락%] [매수잔량+건수], 현재가(최근체결) 행 하이라이트
+  var q=s.book, dom=$('dom'), lt=s.lastTick||{};
+  var prevClose=(lt.price!=null&&lt.change!=null)?(Number(lt.price)-Number(lt.change)):0;
+  if(lt.price!=null){
+    $('curPrice').textContent=f2(lt.price);
+    $('curPrice').style.color=lt.change>0?'var(--red)':(lt.change<0?'var(--acc)':'var(--tx)');
+    $('curChange').textContent=(lt.change>0?'▲':(lt.change<0?'▼':''))+f2(Math.abs(lt.change))+' ('+(lt.drate>0?'+':'')+f2(lt.drate)+'%)';
+    $('curChange').style.color=$('curPrice').style.color;
+  }
+  if(q&&q.offerHo){
+    var maxR=1,i;
+    for(i=0;i<5;i++) maxR=Math.max(maxR,q.offerRem[i],q.bidRem[i]);
+    function bar(v,c){return '<span class="bar" style="width:'+Math.max(2,Math.round(v/maxR*80))+'px;background:'+c+'"></span>'}
+    function pctOf(px){return prevClose>0?(((px/prevClose)-1)*100):null}
+    function pxCell(px){
+      var p=pctOf(px);
+      var col=p==null?'var(--tx)':(p>0?'var(--red)':(p<0?'var(--acc)':'var(--tx)'));
+      return '<td class="px num" style="color:'+col+'">'+f2(px)+(p!=null?'<span class="pct">'+(p>0?'+':'')+p.toFixed(2)+'%</span>':'')+'</td>';
+    }
+    var last=Number(lt.price)||0, rows=[];
+    for(i=4;i>=0;i--){
+      var cur=last>0&&Math.abs(q.offerHo[i]-last)<0.001;
+      rows.push('<tr class="ask-zone'+(cur?' cur':'')+'"><td class="num qty-a">'+nf(q.offerRem[i])+' '+bar(q.offerRem[i],'var(--acc)')+'<span class="cnt">'+nf(q.offerCnt[i])+'건</span></td>'+pxCell(q.offerHo[i])+'<td></td></tr>');
+    }
+    var ht=q.hotime||'';
+    if(ht.length>=6) ht=ht.slice(0,2)+':'+ht.slice(2,4)+':'+ht.slice(4,6);
+    rows.push('<tr class="mid-row"><td colspan="3">micro '+(f.microDevTicks!=null?Number(f.microDevTicks).toFixed(2):'—')+'틱 · SP '+f2(f.spread)+' · '+ht+(q.danhochk==='1'?' · 단일가':'')+'</td></tr>');
+    for(i=0;i<5;i++){
+      var cur2=last>0&&Math.abs(q.bidHo[i]-last)<0.001;
+      rows.push('<tr class="bid-zone'+(cur2?' cur':'')+'"><td></td>'+pxCell(q.bidHo[i])+'<td class="num qty-b"><span class="cnt">'+nf(q.bidCnt[i])+'건</span>'+bar(q.bidRem[i],'var(--red)')+' '+nf(q.bidRem[i])+'</td></tr>');
+    }
+    dom.innerHTML=rows.join('');
+    $('totRem').textContent=nf(q.totOfferRem)+' / '+nf(q.totBidRem);
+  }
+
+  // 체결 테이프
+  var tape=s.tape||[];
+  if(tape.length){
+    $('tape').innerHTML=tape.map(function(t){
+      var buy=t.cgubun==='+'||t.cgubun==='2';
+      return '<div class="row"><span class="t">'+(t.recvAt||t.chetime||'')+'</span><span class="p num '+(buy?'bid':'ask')+'">'+f2(t.price)+'</span><span class="v num">'+nf(t.cvolume)+'</span><span class="'+(buy?'bid':'ask')+'">'+(buy?'매수':'매도')+'</span></div>';
+    }).join('');
+  }
+
+  // 스코어 게이지
+  var sig=s.signal||{};
+  var sc=sig.score||0, pctW=Math.min(50,Math.abs(sc)*50);
+  var fill=$('scoreFill');
+  fill.style.left=sc>=0?'50%':(50-pctW)+'%';
+  fill.style.width=pctW+'%';
+  fill.style.background=sc>=0?'var(--grn)':'var(--red)';
+  $('scoreVal').textContent=Number(sc).toFixed(2);
+  $('breakdown').textContent=sig.breakdown||'—';
+  $('paramsLabel').textContent=sig.paramsLabel||'';
+
+  // 피처 바 (-1~+1 정규화 표시). 해외선물은 basis z 미제공(KOSPI200 전용)이라 제외.
+  var ov=!!(s.contract&&s.contract.overseas);
+  var items=[['OFI 5s z',(f.ofi5sZ||0)/3],['QI 5단',f.qiW5||0],['micro(틱)',(f.microDevTicks||0)],['urgency',Math.min(1,(f.urgency||0)*10)]];
+  if(!ov) items.splice(3,0,['basis z',-(f.basisZ||0)/3]);
+  $('feats').innerHTML=items.map(function(it){
+    var v=Math.max(-1,Math.min(1,it[1])), w=Math.abs(v)*50;
+    return '<div class="feat"><span class="k">'+it[0]+'</span><div class="track"><div class="f" style="'+(v>=0?'left:50%':'right:50%')+';width:'+w+'%;background:'+(v>=0?'var(--grn)':'var(--red)')+'"></div></div><span class="v num">'+Number(it[1]).toFixed(2)+'</span></div>';
+  }).join('');
+  $('midLine').textContent=f2(f.mid)+' / '+(f.microDevTicks!=null?Number(f.microDevTicks).toFixed(2):'—')+' / '+f2(f.spread);
+  $('zLine').textContent=f2(f.rv10Z)+' / '+f2(f.ofi5sZ);
+
+  var t2=s.lastTick||{};
+  // 베이시스/K200 지수는 KOSPI200 선물(FC9) 전용. 해외선물(MES/MNQ)엔 무의미 → N/A 표기.
+  $('chartTitle').innerHTML= ov
+    ? '당일 차트 — 선물가 <span style="color:var(--acc)">━</span>'
+    : '당일 차트 — 선물가 <span style="color:var(--acc)">━</span> · K200 지수 <span style="color:var(--dim)">┄</span>';
+  if(ov){
+    $('basisTitle').textContent='베이시스 — 해외선물 N/A (KOSPI200 전용)';
+    $('basisK1').textContent='기초지수 / 이론가';
+    $('basisK2').textContent='괴리율 / basis z';
+    $('basisK3').textContent='시장 BASIS / 이론 BASIS';
+    $('basis1').textContent='—'; $('basis2').textContent='—'; $('basis3').textContent='—';
+    $('basis4').textContent=nf(t2.openyak)+' / '+f2(t2.cpower);
+  } else {
+    $('basisTitle').textContent='베이시스 (FC9 틱 내장)';
+    $('basisK1').textContent='K200 지수 / 이론가';
+    $('basis1').textContent=f2(t2.k200jisu)+' / '+f2(t2.theoryprice);
+    $('basis2').textContent=f2(t2.kasis)+'% / '+f2(f.basisZ);
+    $('basis3').textContent=f2(t2.sbasis)+' / '+f2(t2.ibasis);
+    $('basis4').textContent=nf(t2.openyak)+' / '+f2(t2.cpower);
+  }
+
+  // 모드 카드
+  var modes=sig.modes||[];
+  $('modes').innerHTML=modes.map(function(m){
+    var p=m.position;
+    return '<div class="mode-card"><h3>모드 '+m.mode+' <span style="color:var(--dim);font-weight:400">'+m.label+'</span></h3>'+
+      '<div class="kv"><span class="k">포지션</span><span class="num">'+(p?(p.side+' @'+f2(p.entry)+' <span class="'+cls(p.unrealizedTicks)+'">'+Number(p.unrealizedTicks).toFixed(1)+'틱</span>'):'없음')+'</span></div>'+
+      '<div class="kv"><span class="k">누적 PnL</span><span class="num '+cls(m.pnlTicks)+'">'+Number(m.pnlTicks).toFixed(1)+'틱 ('+nf(Math.round(m.pnlKrw))+'원)</span></div>'+
+      '<div class="kv"><span class="k">거래/승률</span><span class="num">'+m.trades+'건 / '+Number(m.winRate).toFixed(0)+'%</span></div></div>';
+  }).join('');
+
+  // 체결 이력
+  var fills=sig.fills||[];
+  $('fills').innerHTML=fills.length?fills.map(function(x){
+    return '<tr><td class="num" style="color:var(--dim)">'+x.time+'</td><td>'+x.mode+'</td><td class="'+(x.side==='LONG'?'bid':'ask')+'">'+x.side+'</td><td>'+x.kind+'</td><td class="num">'+f2(x.price)+'</td><td class="num '+cls(x.pnlTicks)+'">'+(x.kind==='ENTRY'?'—':Number(x.pnlTicks).toFixed(1))+'</td></tr>';
+  }).join(''):'<tr><td class="empty" colspan="6">체결 없음</td></tr>';
+
+  var logs=s.logs||[];
+  $('logs').innerHTML=logs.slice(-30).map(function(l){return '<div>'+l.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</div>'}).join('');
+}
+
+// ── 당일 차트 (선물가 실선 + K200 지수 점선, 이중 정규화) ──
+function drawChart(pts){
+  var cv=$('chart'), ctx=cv.getContext('2d');
+  var W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  if(!pts||pts.length<2){ctx.fillStyle='#8a90a6';ctx.font='12px monospace';ctx.fillText('데이터 대기 중',10,20);return}
+  var pMin=Infinity,pMax=-Infinity,kMin=Infinity,kMax=-Infinity,i;
+  for(i=0;i<pts.length;i++){
+    if(pts[i].p>0){pMin=Math.min(pMin,pts[i].p);pMax=Math.max(pMax,pts[i].p)}
+    if(pts[i].k>0){kMin=Math.min(kMin,pts[i].k);kMax=Math.max(kMax,pts[i].k)}
+  }
+  if(pMax-pMin<0.001){pMax+=0.5;pMin-=0.5}
+  if(kMax-kMin<0.001){kMax+=0.5;kMin-=0.5}
+  var pad=6;
+  function x(i){return pad+(W-2*pad)*i/(pts.length-1)}
+  function yP(v){return pad+(H-2*pad)*(1-(v-pMin)/(pMax-pMin))}
+  function yK(v){return pad+(H-2*pad)*(1-(v-kMin)/(kMax-kMin))}
+  // K200 (점선, 회색)
+  ctx.strokeStyle='#8a90a6';ctx.setLineDash([3,3]);ctx.lineWidth=1;ctx.beginPath();
+  var started=false;
+  for(i=0;i<pts.length;i++){if(pts[i].k<=0)continue;var xx=x(i),yy=yK(pts[i].k);if(!started){ctx.moveTo(xx,yy);started=true}else ctx.lineTo(xx,yy)}
+  ctx.stroke();ctx.setLineDash([]);
+  // 선물가 (실선) — 시가 대비 상승/하락 색
+  var up=pts[pts.length-1].p>=pts[0].p;
+  ctx.strokeStyle=up?'#e05a5a':'#5b8cff';ctx.lineWidth=1.6;ctx.beginPath();
+  started=false;
+  for(i=0;i<pts.length;i++){if(pts[i].p<=0)continue;var x2=x(i),y2=yP(pts[i].p);if(!started){ctx.moveTo(x2,y2);started=true}else ctx.lineTo(x2,y2)}
+  ctx.stroke();
+  $('chartL').textContent=pts[0].t+' · 고 '+pMax.toFixed(2)+' 저 '+pMin.toFixed(2);
+  $('chartR').textContent=pts[pts.length-1].t+' · '+pts[pts.length-1].p.toFixed(2);
+}
+function pollChart(){
+  fetch('/api/chart'+q()).then(function(r){return r.json()}).then(drawChart).catch(function(){});
+}
+
+function poll(){
+  fetch('/api/state'+q()).then(function(r){return r.json()}).then(render).catch(function(){
+    $('connBadge').textContent='API 오류'; $('connBadge').className='badge b-off';
+  });
+}
+function pick(code){ SYM=code; poll(); pollChart(); }
+poll(); setInterval(poll, 700);
+pollChart(); setInterval(pollChart, 5000);
+</script>
+</body>
+</html>

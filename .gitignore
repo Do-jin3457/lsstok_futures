@@ -1,0 +1,10 @@
+bin/
+obj/
+data_backup/
+*.db
+*.db-wal
+*.db-shm
+*.user
+*.suo
+.vs/
+.omc/
