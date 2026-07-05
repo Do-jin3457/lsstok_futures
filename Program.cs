@@ -44,6 +44,7 @@ namespace LS.Futures
 
             if (args.Contains("--probe-master")) { RunProbeMaster(); return; }
             if (args.Contains("--chart-probe")) { RunChartProbe(args); return; }
+            if (args.Contains("--idx-probe")) { RunIndexProbe(args); return; }
 
             int port = GetIntArg(args, "--port", 8801);
             string futcodeOverride = GetStrArg(args, "--futcode", "");
@@ -191,7 +192,29 @@ namespace LS.Futures
             Log(loginOk ? "[boot] 가동 중 — 휴장 시 데이터 0 정상" : "[boot] 구조 부팅만 완료(로그인 실패)");
 
             if (selfTest) { Thread.Sleep(20000); Log("[boot] selftest 20초 경과 — 종료"); }
-            else { Console.WriteLine("종료하려면 Enter..."); Console.ReadLine(); }
+            else
+            {
+                // XingAPI 세션 재접속 로직이 없고(Logout 이벤트도 공식 문서상 미발화, 실측으로도 불확실),
+                // 세션 안에서 재로그인 시도는 COM 상태가 꼬이는 경우가 많다고 알려져 있어(2026-07-05 회원 확인) —
+                // "끊김 감지 후 재접속" 대신 "매일 안전한 시각에 무조건 자체 종료 → 워치독(run_futures_loop.bat)이
+                // 완전히 새 프로세스로 재기동"하는 예방적 방식 채택. 06:00~07:00은 국내야간(마감06:00)+CME(정비브레이크
+                // 06:00~07:00) 둘 다 확실히 쉬는 시간이라 06:20으로 고정 — 05:50은 야간세션 마감(06:00) 전이라
+                // 매일 10분치 데이터를 놓치게 되므로 부적합(최초 설계 오류, 세션 시간 재확인 후 수정).
+                Console.WriteLine("종료하려면 Enter... (또는 매일 06:20 예방적 자동 재기동)");
+                while (true)
+                {
+                    bool keyIn = false;
+                    try { keyIn = Console.KeyAvailable; } catch { /* 입력 리다이렉트 환경에선 무시 */ }
+                    if (keyIn) { Console.ReadLine(); break; }
+                    var now = DateTime.Now;
+                    if (now.Hour == 6 && now.Minute == 20 && now.Second < 10)
+                    {
+                        Log("[boot] 일일 예방적 재기동(06:20) — XingAPI 세션 갱신 목적, 워치독이 새 프로세스로 즉시 재기동");
+                        break;
+                    }
+                    Thread.Sleep(2000);
+                }
+            }
 
             // 종료: COM 해제는 생성 아파트먼트(STA)에서 (좀비 방지 — 주식 엔진과 동일 규율)
             try { if (web != null) web.Dispose(); } catch { }
@@ -232,14 +255,12 @@ namespace LS.Futures
                             foreach (var x in items)
                                 Log($"[probe]   sh={x.Shcode} exp={x.Expcode} {x.Hname}");
                         };
-                        _rt.RequestDerivMaster("MF");
-                        Thread.Sleep(3000);
-                        _rt.RequestOverseasMaster("");   // 해외선물 마스터 — MES/MNQ 심볼·증거금·거래시간
-                        Thread.Sleep(6000);
-                        // CME 심볼 규칙(U=9월, 26=2026) 직접 실측 — CME 개장 중이면 라이브 틱이 와야 함
-                        _rt.ProbeOverseasSubscribe("MESU26");
-                        _rt.ProbeOverseasSubscribe("MNQU26");
-                        Thread.Sleep(15000);
+                        // gubun="예비(reserved)" 필드지만 실제 필터링 여부 미확인 — CME 포함 여부 다값 스캔(2026-07-05)
+                        foreach (var g in new[] { "", "1", "2", "3", "4", "A", "B", "C", "U", "F" })
+                        {
+                            _rt.RequestOverseasMaster(g);
+                            Thread.Sleep(2000);
+                        }
                     }
                     done.Set();
                 }
@@ -264,10 +285,13 @@ namespace LS.Futures
         private static void RunChartProbe(string[] args)
         {
             bool isIndex = args.Contains("--index");
+            bool isOverseas = args.Contains("--overseas");
+            bool isIdxHist = args.Contains("--idxhist");
             string shcode = GetStrArg(args, "--shcode", isIndex ? "101" : "A0169000");
             int minU = GetIntArg(args, "--min", 1);
             int pages = GetIntArg(args, "--pages", 3);
-            Log($"[chart] {(isIndex ? "t8418 지수" : "t8465 선물")} 과거 분봉 조회: {shcode} {minU}분 x 최대{pages}페이지");
+            string trLabel = isIndex ? "t8418 지수" : isIdxHist ? "t3518 해외지수" : isOverseas ? "o3103 해외선물" : "t8465 선물";
+            Log($"[chart] {trLabel} 과거 분봉 조회: {shcode} {minU}분 x 최대{pages}페이지");
 
             var config = EngineConfig.Load(CfgPath, ResDir);
             ResPath.Configure(config.ResDir);
@@ -291,15 +315,18 @@ namespace LS.Futures
                             total += bars.Count;
                             recorder.SaveMinBars(bars);
                         };
+                        _rt.OnChartDone += delegate { done.Set(); };   // blind Sleep 대신 실제 완료/거부 이벤트로 신호(2026-07-05 fix)
                         if (isIndex) _rt.RequestIndexChart(shcode, minU, pages);
+                        else if (isIdxHist) _rt.RequestIndexHistChart(shcode, minU, pages);
+                        else if (isOverseas) _rt.RequestOverseasMinChart(shcode, minU, pages);
                         else _rt.RequestMinChart(shcode, minU, pages);
-                        Thread.Sleep(1500 * pages + 8000);   // 연속조회(페이싱 300ms) 완료 여유 대기
+                        return;   // done.Set()은 OnChartDone 콜백에서만 — 여기서 바로 반환(Pump 스레드 안 막음)
                     }
                     done.Set();
                 }
                 catch (Exception ex) { Log("[chart] 오류: " + ex); done.Set(); }
             });
-            done.Wait(120000);
+            done.Wait(1200000);   // 안전망(20분) — 정상적으론 OnChartDone이 훨씬 먼저 신호
             Thread.Sleep(2000);
             Log($"[chart] 총 {total}봉 저장 완료 (db={recorder.DbPath})");
             Pump.Invoke(delegate
@@ -309,6 +336,60 @@ namespace LS.Futures
             });
             Pump.Stop();
             try { recorder.Dispose(); } catch { }
+            HardExit();
+        }
+
+        /// <summary>
+        /// --idx-probe: t3518 해외지수(S&P500/나스닥100) 심볼 유효성 독립 확인. OVC 틱 없이도(주말 등) 즉시 조회.
+        /// 사용: LS.Futures.exe --idx-probe --symbols "SPI@SPX,NAS@NDX"
+        /// ⚠️ 0건이면 심볼무효/휴장 둘 다 가능 — 장중 재확인 필요(이 probe는 유효성 스크리닝용).
+        /// </summary>
+        private static void RunIndexProbe(string[] args)
+        {
+            string symArg = GetStrArg(args, "--symbols", "SPI@SPX,NAS@NDX");
+            string[] syms = symArg.Split(',');
+            Log($"[idxprobe] t3518 심볼 확인: {string.Join(", ", syms)}");
+
+            var config = EngineConfig.Load(CfgPath, ResDir);
+            ResPath.Configure(config.ResDir);
+
+            var done = new ManualResetEventSlim();
+            Pump.Run(delegate
+            {
+                try
+                {
+                    _session = new XingSessionService();
+                    bool ok = _session.ConnectAndLogin(config);
+                    Log(ok ? $"[idxprobe] 로그인 OK ({_session.LoginCode})" : $"[idxprobe] 로그인 실패 {_session.LoginCode} {_session.LoginMsg}");
+                    if (ok)
+                    {
+                        _rt = new FuturesRealTime(Log);
+                        var respSignal = new ManualResetEventSlim();
+                        _rt.OnIndexProbe += delegate (string sym, bool okRes, string detail)
+                        {
+                            Log($"[idxprobe] {sym} → {(okRes ? "OK" : "FAIL")} : {detail}");
+                            respSignal.Set();
+                        };
+                        foreach (var s in syms)
+                        {
+                            respSignal.Reset();
+                            _rt.ProbeIndexQuery(s.Trim());
+                            respSignal.Wait(5000);   // 응답 오면 즉시 다음 심볼(겹침 방지, blind sleep 대신)
+                            Thread.Sleep(300);        // TR 페이싱(초당 5건 제한 회피) 최소 여유
+                        }
+                    }
+                    done.Set();
+                }
+                catch (Exception ex) { Log("[idxprobe] 오류: " + ex); done.Set(); }
+            });
+            done.Wait(30000);
+            Thread.Sleep(1000);
+            Pump.Invoke(delegate
+            {
+                try { if (_rt != null) _rt.Dispose(); } catch { }
+                try { if (_session != null) _session.ReleaseAndDisconnect(); } catch { }
+            });
+            Pump.Stop();
             HardExit();
         }
 

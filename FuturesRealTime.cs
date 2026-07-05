@@ -26,6 +26,8 @@ namespace LS.Futures
         private XAQuery _t8465;   // 선물/옵션 N분 차트(과거조회) — 다장세 백테스트용 (2026-07-04)
         private XAQuery _t8418;   // 업종(지수) N분 차트 — KOSPI200 지수 과거(만기무관 몇년), R7 시간대모멘텀·괴리율용
         private XAQuery _t3518;   // 해외 기초지수(S&P500/나스닥100) — 해외 basis 계산용 (2026-07-04, 30초 스로틀 조회)
+        private XAQuery _o3103;   // 해외선물 N분 차트(과거조회, MES/MNQ) — 다국면 백테스트용 (2026-07-05)
+        private XAQuery _t3518Hist;   // 해외지수(S&P500/나스닥100) 과거 N분 차트 — MES/MNQ 계약 히스토리 미지원 대안(2026-07-05, kind=S/jgbn=3). 라이브 베이시스용 _t3518과 분리(오염 방지).
         // 해외선물 → 기초지수 심볼 (t3518 kind=S). NDX는 추정 — 월요일 US장 검증.
         private readonly System.Collections.Generic.Dictionary<string, string> _futToIdx = new System.Collections.Generic.Dictionary<string, string>
         {
@@ -42,6 +44,11 @@ namespace LS.Futures
         public event Action<List<T9943Item>> OnMaster;
         public event Action<List<T9943Item>> OnDerivMaster;   // t8435 (미니 포함 파생 전체 — 동일 필드라 T9943Item 재사용)
         public event Action<List<FutMinBar>> OnMinChart;      // t8465 분봉 배치(연속조회 페이지 단위)
+        public event Action<string, bool, string> OnIndexProbe;  // (symbol, ok, detail) — t3518 독립 probe용(2026-07-05)
+        public event Action OnChartDone;   // 과거차트 연속조회 실제 종료(정상완료/거부) 신호 — Sleep blind-wait 대체용(2026-07-05)
+
+        /// <summary>t3518 해외지수 조회 독립 probe — OVC 틱 없이도(주말 등) 심볼 유효성만 즉시 확인.</summary>
+        public void ProbeIndexQuery(string symbol) { QueryIndex(symbol); }
 
         public FuturesRealTime(Action<string> log)
         {
@@ -69,6 +76,140 @@ namespace LS.Futures
             _t3518 = new XAQuery();
             _t3518.ReceiveData += OnRecv_t3518;
             _t3518.ReceiveMessage += (isErr, code, msg) => _log($"[t3518] 서버메시지 err={isErr} code={code} {msg}");
+            _o3103 = new XAQuery();
+            _o3103.ReceiveData += OnRecv_o3103;
+            _o3103.ReceiveMessage += (isErr, code, msg) => _log($"[o3103] 서버메시지 err={isErr} code={code} {msg}");
+            _t3518Hist = new XAQuery();
+            _t3518Hist.ReceiveData += OnRecv_t3518Hist;
+            _t3518Hist.ReceiveMessage += (isErr, code, msg) => _log($"[t3518h] 서버메시지 err={isErr} code={code} {msg}");
+        }
+
+        /// <summary>해외지수(S&amp;P500=SPI@SPX, 나스닥100=NAS@NDX) 과거 N분 차트 — MES/MNQ 계약 자체 히스토리가 안 되는 대안(2026-07-05).</summary>
+        public void RequestIndexHistChart(string symbol, int minUnit, int maxPages)
+        {
+            _chartCode = symbol; _chartMin = minUnit;
+            _chartPages = 0; _chartMaxPages = maxPages;
+            SendIndexHistReq("", "");
+        }
+
+        private void SendIndexHistReq(string ctsDate, string ctsTime)
+        {
+            try
+            {
+                _t3518Hist.LoadFromResFile(ResPath.Get("t3518.res"));
+                _t3518Hist.SetFieldData("t3518InBlock", "kind", 0, "S");     // S=해외지수
+                _t3518Hist.SetFieldData("t3518InBlock", "symbol", 0, _chartCode);
+                _t3518Hist.SetFieldData("t3518InBlock", "cnt", 0, "500");
+                _t3518Hist.SetFieldData("t3518InBlock", "jgbn", 0, "4");     // 공식가이드 예제=4(틱). 3(분)은 예제도 없고 실측 0건(2026-07-05).
+                _t3518Hist.SetFieldData("t3518InBlock", "nmin", 0, "0");     // jgbn=4일 땐 무시되는 필드(문서상 3일 때만 유효)
+                bool cont = ctsDate != "" || ctsTime != "";
+                // 공식가이드: 처음 조회시 cts_date/cts_time = 스페이스(빈문자열 아님) — cont 판정은 내부 ""로 그대로 두고 필드값만 치환.
+                _t3518Hist.SetFieldData("t3518InBlock", "cts_date", 0, cont ? ctsDate : " ");
+                _t3518Hist.SetFieldData("t3518InBlock", "cts_time", 0, cont ? ctsTime : " ");
+                int rc = _t3518Hist.Request(cont);
+                if (rc < 0) { _log($"[t3518h] Request 거부 rc={rc} (symbol={_chartCode})"); var d = OnChartDone; if (d != null) d(); }
+            }
+            catch (Exception ex) { _log("[t3518h] 요청 실패: " + ex.Message); }
+        }
+
+        private void OnRecv_t3518Hist(string szTrCode)
+        {
+            if (szTrCode != "t3518") return;
+            try
+            {
+                int cnt = _t3518Hist.GetBlockCount("t3518OutBlock1");
+                var bars = new List<FutMinBar>(cnt);
+                for (int i = 0; i < cnt; i++)
+                {
+                    // jgbn=4(틱) 응답이라 open/high/low는 당일 고정값(신뢰 안 함) — price만 사용, 1분봉 집계는 후처리에서.
+                    decimal px = Dec(_t3518Hist.GetFieldData("t3518OutBlock1", "price", i));
+                    bars.Add(new FutMinBar
+                    {
+                        Code = _chartCode,
+                        Date = Trimmed(_t3518Hist.GetFieldData("t3518OutBlock1", "date", i)),
+                        Time = Trimmed(_t3518Hist.GetFieldData("t3518OutBlock1", "time", i)),
+                        Open = px, High = px, Low = px, Close = px,
+                        Volume = Lng(_t3518Hist.GetFieldData("t3518OutBlock1", "volume", i)),
+                        Value = 0,
+                        OpenYak = 0
+                    });
+                }
+                string ctsD = Trimmed(_t3518Hist.GetFieldData("t3518OutBlock", "cts_date", 0));
+                string ctsT = Trimmed(_t3518Hist.GetFieldData("t3518OutBlock", "cts_time", 0));
+                _chartPages++;
+                string firstDT = cnt > 0 ? bars[0].Date + " " + bars[0].Time : "-";
+                string lastDT = cnt > 0 ? bars[cnt - 1].Date + " " + bars[cnt - 1].Time : "-";
+                _log($"[t3518h] p{_chartPages} {cnt}봉 [{firstDT} ~ {lastDT}] cts=({ctsD},{ctsT})");
+                var h = OnMinChart; if (h != null) h(bars);
+
+                bool more = (ctsD != "" || ctsT != "") && cnt > 0 && _chartPages < _chartMaxPages;
+                if (more) { System.Threading.Thread.Sleep(300); SendIndexHistReq(ctsD, ctsT); }
+                else { _log($"[t3518h] 조회 완료 — 총 {_chartPages}페이지"); var d = OnChartDone; if (d != null) d(); }
+            }
+            catch (Exception ex) { _log("[t3518h] 파싱 오류: " + ex.Message); }
+        }
+
+        /// <summary>해외선물 과거 N분 차트 조회 시작(o3103) — symbol=MESU26/MNQU26 등, CME 계약월 포함 그대로.</summary>
+        public void RequestOverseasMinChart(string symbol, int minUnit, int maxPages)
+        {
+            _chartCode = symbol; _chartMin = minUnit;
+            _chartPages = 0; _chartMaxPages = maxPages;
+            SendOverseasChartReq("", "");
+        }
+
+        private void SendOverseasChartReq(string ctsDate, string ctsTime)
+        {
+            try
+            {
+                _o3103.LoadFromResFile(ResPath.Get("o3103.res"));
+                _o3103.SetFieldData("o3103InBlock", "shcode", 0, _chartCode);
+                _o3103.SetFieldData("o3103InBlock", "ncnt", 0, _chartMin.ToString());
+                _o3103.SetFieldData("o3103InBlock", "readcnt", 0, "500");   // comp_yn 필드 없음(비압축 고정)
+                _o3103.SetFieldData("o3103InBlock", "cts_date", 0, ctsDate);
+                _o3103.SetFieldData("o3103InBlock", "cts_time", 0, ctsTime);
+                bool cont = ctsDate != "" || ctsTime != "";
+                int rc = _o3103.Request(cont);
+                if (rc < 0) { _log($"[o3103] Request 거부 rc={rc} (symbol={_chartCode})"); var d = OnChartDone; if (d != null) d(); }
+            }
+            catch (Exception ex) { _log("[o3103] 요청 실패: " + ex.Message); }
+        }
+
+        private void OnRecv_o3103(string szTrCode)
+        {
+            if (szTrCode != "o3103") return;
+            try
+            {
+                int cnt = _o3103.GetBlockCount("o3103OutBlock1");
+                var bars = new List<FutMinBar>(cnt);
+                for (int i = 0; i < cnt; i++)
+                {
+                    bars.Add(new FutMinBar
+                    {
+                        Code = _chartCode,
+                        Date = Trimmed(_o3103.GetFieldData("o3103OutBlock1", "date", i)),
+                        Time = Trimmed(_o3103.GetFieldData("o3103OutBlock1", "time", i)),
+                        Open = Dec(_o3103.GetFieldData("o3103OutBlock1", "open", i)),
+                        High = Dec(_o3103.GetFieldData("o3103OutBlock1", "high", i)),
+                        Low = Dec(_o3103.GetFieldData("o3103OutBlock1", "low", i)),
+                        Close = Dec(_o3103.GetFieldData("o3103OutBlock1", "close", i)),
+                        Volume = Lng(_o3103.GetFieldData("o3103OutBlock1", "volume", i)),
+                        Value = 0,
+                        OpenYak = 0
+                    });
+                }
+                string ctsD = Trimmed(_o3103.GetFieldData("o3103OutBlock", "cts_date", 0));
+                string ctsT = Trimmed(_o3103.GetFieldData("o3103OutBlock", "cts_time", 0));
+                _chartPages++;
+                string firstDT = cnt > 0 ? bars[0].Date + " " + bars[0].Time : "-";
+                string lastDT = cnt > 0 ? bars[cnt - 1].Date + " " + bars[cnt - 1].Time : "-";
+                _log($"[o3103] p{_chartPages} {cnt}봉 [{firstDT} ~ {lastDT}] cts=({ctsD},{ctsT})");
+                var h = OnMinChart; if (h != null) h(bars);
+
+                bool more = (ctsD != "" || ctsT != "") && cnt > 0 && _chartPages < _chartMaxPages;
+                if (more) { System.Threading.Thread.Sleep(300); SendOverseasChartReq(ctsD, ctsT); }
+                else { _log($"[o3103] 조회 완료 — 총 {_chartPages}페이지"); var d = OnChartDone; if (d != null) d(); }
+            }
+            catch (Exception ex) { _log("[o3103] 파싱 오류: " + ex.Message); }
         }
 
         /// <summary>지수(업종) 과거 분봉 조회 시작 — upcode=업종코드(KOSPI200="101"). 만기 없어 과거 몇 년 가능.</summary>
@@ -83,12 +224,13 @@ namespace LS.Futures
         {
             try
             {
-                // V2(01_V2_ALL) 검증 레시피: TR t8409(업종차트)+t8409InBlock+comp_yn=Y/qrycnt=2000/sdate 빈값.
                 // t8418은 서버가 미인식(Request rc=-23="TR정보 없음") — 2026-07-04 실측. t8409로 전환.
+                // comp_yn=Y(압축) 응답은 GetFieldData 전 XAQuery.Decompress(블록명) 호출 필수 — 안 하면 date/OHLC 전체 쓰레기값(실측 확인).
+                // V2(01_V2_ALL) TRRequest.cs:1579 `TR_t8418.Decompress("t8409OutBlock1")` 검증된 패턴 — OnRecv_t8418에서 호출.
                 _t8418.LoadFromResFile(ResPath.Get("t8409.res"));
                 _t8418.SetFieldData("t8409InBlock", "shcode", 0, _chartCode);
                 _t8418.SetFieldData("t8409InBlock", "ncnt", 0, _chartMin.ToString());
-                _t8418.SetFieldData("t8409InBlock", "qrycnt", 0, "2000");
+                _t8418.SetFieldData("t8409InBlock", "qrycnt", 0, "2000");   // 압축 상한
                 _t8418.SetFieldData("t8409InBlock", "nday", 0, "0");
                 _t8418.SetFieldData("t8409InBlock", "sdate", 0, "");
                 _t8418.SetFieldData("t8409InBlock", "edate", 0, DateTime.Now.ToString("yyyyMMdd"));  // t8465 교훈: edate 비면 0봉
@@ -96,7 +238,7 @@ namespace LS.Futures
                 _t8418.SetFieldData("t8409InBlock", "cts_date", 0, ctsDate);
                 _t8418.SetFieldData("t8409InBlock", "cts_time", 0, ctsTime);
                 int rc = _t8418.Request(ctsDate != "" || ctsTime != "");
-                if (rc < 0) _log($"[t8418] Request 거부 rc={rc} (shcode={_chartCode}) — 에러코드 확인 필요");
+                if (rc < 0) { _log($"[t8418] Request 거부 rc={rc} (shcode={_chartCode}) — 에러코드 확인 필요"); var d = OnChartDone; if (d != null) d(); }
             }
             catch (Exception ex) { _log("[t8418] 요청 실패: " + ex.Message); }
         }
@@ -106,6 +248,7 @@ namespace LS.Futures
             if (szTrCode != "t8409") return;
             try
             {
+                _t8418.Decompress("t8409OutBlock1");   // comp_yn=Y 응답 압축해제 — GetFieldData 전 필수(V2 검증 패턴)
                 int cnt = _t8418.GetBlockCount("t8409OutBlock1");
                 var bars = new List<FutMinBar>(cnt);
                 for (int i = 0; i < cnt; i++)
@@ -134,17 +277,22 @@ namespace LS.Futures
 
                 bool more = (ctsD != "" || ctsT != "") && cnt > 0 && _chartPages < _chartMaxPages;
                 if (more) { System.Threading.Thread.Sleep(300); SendIndexReq(ctsD, ctsT); }
-                else _log($"[t8418] 조회 완료 — 총 {_chartPages}페이지");
+                else { _log($"[t8418] 조회 완료 — 총 {_chartPages}페이지"); var d = OnChartDone; if (d != null) d(); }
             }
             catch (Exception ex) { _log("[t8418] 파싱 오류: " + ex.Message); }
         }
 
+        private volatile bool _t3518Busy;   // 단일 XAQuery 객체 겹침요청 방지(2026-07-05 실측: 겹치면 앞 요청 응답 유실/오염)
+
         /// <summary>해외 기초지수(S&P500/나스닥100) 현재가 조회 — ParseOvsTick(STA 콜백)에서 30초 스로틀 호출.
-        /// 결과는 _idxPrice에 저장 → ParseOvsTick이 basis=선물−지수 주입. ⚠️미검증(월요일 US장 확인).</summary>
+        /// 결과는 _idxPrice에 저장 → ParseOvsTick이 basis=선물−지수 주입. ⚠️미검증(월요일 US장 확인).
+        /// 단일 _t3518 객체를 MES/MNQ가 공유 — 진행 중(busy)이면 이번 호출 스킵(30초 후 재시도, 무해).</summary>
         private void QueryIndex(string symbol)
         {
+            if (_t3518Busy) { _log($"[t3518] {symbol} 스킵(이전 요청 처리중)"); return; }
             try
             {
+                _t3518Busy = true;
                 _t3518.LoadFromResFile(ResPath.Get("t3518.res"));
                 _t3518.SetFieldData("t3518InBlock", "kind", 0, "S");        // S=해외지수
                 _t3518.SetFieldData("t3518InBlock", "symbol", 0, symbol);
@@ -153,9 +301,14 @@ namespace LS.Futures
                 _t3518.SetFieldData("t3518InBlock", "nmin", 0, "1");
                 _lastIdxSym = symbol;
                 int rc = _t3518.Request(false);
-                if (rc < 0) _log($"[t3518] {symbol} Request 거부 rc={rc}");
+                if (rc < 0)
+                {
+                    _t3518Busy = false;
+                    _log($"[t3518] {symbol} Request 거부 rc={rc}");
+                    var h = OnIndexProbe; if (h != null) h(symbol, false, $"Request 거부 rc={rc}");
+                }
             }
-            catch (Exception ex) { _log("[t3518] 요청 실패: " + ex.Message); }
+            catch (Exception ex) { _t3518Busy = false; _log("[t3518] 요청 실패: " + ex.Message); }
         }
 
         private void OnRecv_t3518(string szTrCode)
@@ -164,15 +317,34 @@ namespace LS.Futures
             try
             {
                 int cnt = _t3518.GetBlockCount("t3518OutBlock1");
-                if (cnt <= 0) { _log($"[t3518] {_lastIdxSym} 0건(심볼/파라미터 확인 필요)"); return; }
-                double px;
-                if (double.TryParse(Trimmed(_t3518.GetFieldData("t3518OutBlock1", "price", cnt - 1)), out px) && px > 0)
+                if (cnt <= 0)
                 {
-                    _idxPrice[_lastIdxSym] = px;
-                    _log($"[t3518] {_lastIdxSym} 기초지수={px:F2}");
+                    _log($"[t3518] {_lastIdxSym} 0건(심볼무효 또는 시장휴장 — 구분불가)");
+                    var h0 = OnIndexProbe; if (h0 != null) h0(_lastIdxSym, false, "0건(심볼무효/휴장 구분불가)");
+                    return;
+                }
+                // 응답 자체의 symbol 필드로 식별 — _lastIdxSym(요청 순서 추적)은 겹친 요청에서 오염됨(2026-07-05 실측: 동시응답 시 둘 다 마지막요청 심볼로 오라벨).
+                int i = cnt - 1;
+                string respSym = Trimmed(_t3518.GetFieldData("t3518OutBlock1", "symbol", i));
+                if (string.IsNullOrEmpty(respSym)) respSym = _lastIdxSym;   // 필드 비면 폴백
+                double px;
+                if (double.TryParse(Trimmed(_t3518.GetFieldData("t3518OutBlock1", "price", i)), out px) && px > 0)
+                {
+                    _idxPrice[respSym] = px;
+                    _log($"[t3518] {respSym} 기초지수={px:F2}");
+                    var h1 = OnIndexProbe; if (h1 != null) h1(respSym, true, $"{px:F2}");
+                }
+                else
+                {
+                    var h2 = OnIndexProbe; if (h2 != null) h2(respSym, false, "가격 파싱 실패/0");
                 }
             }
-            catch (Exception ex) { _log("[t3518] 파싱 오류: " + ex.Message); }
+            catch (Exception ex)
+            {
+                _log("[t3518] 파싱 오류: " + ex.Message);
+                var h3 = OnIndexProbe; if (h3 != null) h3(_lastIdxSym, false, "예외: " + ex.Message);
+            }
+            finally { _t3518Busy = false; }   // 응답 도착(성공/실패 불문) → 다음 요청 허용
         }
 
         // ── t8465 선물/옵션 N분 과거 차트 (연속조회로 다장세 수집) ──
@@ -241,7 +413,7 @@ namespace LS.Futures
 
                 bool more = (ctsD != "" || ctsT != "") && cnt > 0 && _chartPages < _chartMaxPages;
                 if (more) { System.Threading.Thread.Sleep(300); SendChartReq(ctsD, ctsT); }   // 초당 요청제한 회피(연속조회 페이싱)
-                else _log($"[t8465] 조회 완료 — 총 {_chartPages}페이지");
+                else { _log($"[t8465] 조회 완료 — 총 {_chartPages}페이지"); var d = OnChartDone; if (d != null) d(); }
             }
             catch (Exception ex) { _log("[t8465] 파싱 오류: " + ex.Message); }
         }

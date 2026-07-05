@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
 namespace LS.Futures
 {
@@ -267,6 +269,69 @@ namespace LS.Futures
         private readonly int _trHoldMin;                       // 종목별 config (Part A)
         private readonly double _trThrFrac, _trErThr, _trKAtr; // 종목별 config (Part A)
         private readonly List<double[]> _mids = new List<double[]>();  // [ms, mid] 1분 샘플
+
+        // ── 첫30분 레인지 게이트(관측전용, 2026-07-05) ──
+        // 지수(IDX001) 84일 워크포워드 검증에선 유의(스킵일 p=0.0028)했으나 실제 미니선물 9일 실데이터로
+        // 대조 시 재현 안 됨(표본 9일이 너무 작아 판정 불가 상태) — 그래서 실거래엔 미반영, 매일 판단만
+        // 로그에 쌓아서 미니선물 실데이터가 30~40일 이상 모이면 같은 워크포워드 방식으로 재검증할 것.
+        private string _gateDayKey = "";
+        private double _gateOpenPx, _gateHigh30, _gateLow30;
+        private long _gateDayStartMs;
+        private bool _gateLocked;
+        private double _gateE30 = -1;
+        private bool? _gateDecision;
+        private string GateLogPath => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data", "gate_shadow_log.csv");
+
+        private void ShadowGateStep(double mid, long now, string dk)
+        {
+            if (dk != _gateDayKey)
+            {
+                if (_gateDayKey != "" && _gateLocked)
+                    AppendGateLog(_gateDayKey, _gateE30, _gateDecision == true, _trV1.DayPnlTicks, _trV2.DayPnlTicks);
+                _gateDayKey = dk; _gateOpenPx = mid; _gateHigh30 = mid; _gateLow30 = mid;
+                _gateDayStartMs = now; _gateLocked = false; _gateE30 = -1; _gateDecision = null;
+            }
+            if (_gateLocked || mid <= 0) return;
+            if (mid > _gateHigh30) _gateHigh30 = mid;
+            if (mid < _gateLow30) _gateLow30 = mid;
+            if (now - _gateDayStartMs < 30L * 60000) return;
+            _gateE30 = _gateOpenPx > 0 ? (_gateHigh30 - _gateLow30) / _gateOpenPx : 0;
+            double median = LoadHistMedianE30();
+            _gateDecision = median <= 0 || _gateE30 >= median;
+            _gateLocked = true;
+            string verdict = _gateDecision == true ? "통과권고" : "스킵권고";
+            _log($"[gate] {dk} 첫30분레인지={_gateE30 * 100:F2}% 기준중앙값={median * 100:F2}% -> {verdict} (관측전용, 실거래 미영향)");
+        }
+
+        private double LoadHistMedianE30()
+        {
+            try
+            {
+                if (!File.Exists(GateLogPath)) return -1;
+                var vals = new List<double>();
+                foreach (var line in File.ReadAllLines(GateLogPath))
+                {
+                    var f = line.Split(',');
+                    if (f.Length >= 2 && double.TryParse(f[1], out double e30)) vals.Add(e30);
+                }
+                if (vals.Count < 5) return -1;
+                vals.Sort();
+                int mid2 = vals.Count / 2;
+                return vals.Count % 2 == 0 ? (vals[mid2 - 1] + vals[mid2]) / 2.0 : vals[mid2];
+            }
+            catch (Exception ex) { _log("[gate] 히스토리 로드 실패: " + ex.Message); return -1; }
+        }
+
+        private void AppendGateLog(string date, double e30, bool gatePass, double v1PnlTicks, double v2PnlTicks)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(GateLogPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.AppendAllText(GateLogPath, $"{date},{e30:F6},{gatePass},{v1PnlTicks:F2},{v2PnlTicks:F2}\n");
+            }
+            catch (Exception ex) { _log("[gate] 로그 기록 실패: " + ex.Message); }
+        }
         private long _lastMidMs;
 
         private sealed class TrendMode
@@ -293,6 +358,7 @@ namespace LS.Futures
                 long cut = now - 36L * 60000;
                 while (_mids.Count > 0 && _mids[0][0] < cut) _mids.RemoveAt(0);
             }
+            ShadowGateStep(mid, now, dk);   // 관측전용 — HandleTrend가 dk 전환시 DayPnlTicks 리셋하기 전에 먼저 캡처
             double mom = Momentum(now, mid, TrLookbackMin);
             double thrPt = mid * _trThrFrac;
             double er = EffRatio(TrErWin);
@@ -309,10 +375,13 @@ namespace LS.Futures
             for (int i = _mids.Count - 1; i >= 0; i--) { if (_mids[i][0] <= target) { past = _mids[i][1]; found = true; break; } }
             return found ? mid - past : 0;   // 10분치 없으면 0(진입 안 함)
         }
+        private const int ErSmooth = 3;   // 끝점 평활화 봉수 — 2026-07-05: 끝점 단일값은 마지막 1봉 반등에 취약(실측: 29분 진짜 추세를 1봉 반등이 "횡보"로 오판시킴)
         private double EffRatio(int win)
         {
-            int n = _mids.Count; if (n < win + 1) return 1.0;
-            double net = Math.Abs(_mids[n - 1][1] - _mids[n - 1 - win][1]);
+            int n = _mids.Count; if (n < win + ErSmooth) return -1;   // 데이터부족(워밍업~33분) → 미달값(< _trErThr 자연히 걸려 진입스킵). 이전엔 1.0(="확실 추세")이라 워밍업마다 필터 무력화되던 버그(2026-07-05 실측: 재백테스트서 워밍업 31건이 필터없이 진입해 net 과대집계).
+            double endAvg = 0; for (int i = n - ErSmooth; i < n; i++) endAvg += _mids[i][1]; endAvg /= ErSmooth;
+            double startAvg = 0; for (int i = n - win - ErSmooth; i < n - win; i++) startAvg += _mids[i][1]; startAvg /= ErSmooth;
+            double net = Math.Abs(endAvg - startAvg);
             double tot = 0; for (int i = n - win; i < n; i++) tot += Math.Abs(_mids[i][1] - _mids[i - 1][1]);
             return tot > 0 ? net / tot : 0;
         }
@@ -415,7 +484,14 @@ namespace LS.Futures
                 {
                     time = f.Time, mode = f.Mode, side = f.Side, kind = f.Kind,
                     price = f.Price, pnlTicks = f.PnlTicks, score = f.Score
-                })
+                }),
+                gateShadow = new
+                {
+                    note = "관측전용 — 실거래 미영향. 지수(84일) 워크포워드 검증 유의, 미니선물 9일 실데이터로 미확인.",
+                    locked = _gateLocked,
+                    e30Pct = _gateLocked ? _gateE30 * 100 : (double?)null,
+                    decision = _gateDecision
+                }
             };
         }
     }
