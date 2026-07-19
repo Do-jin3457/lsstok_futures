@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LS.Futures 모바일</title>
+<style>
+/* 모바일 전용 대시보드 (2026-07-19) — Z폴드7 커버(~373px)·내부(~674px+) 반응형.
+   좁은 화면: 1열 스택 / 600px 이상(펼침): 2열 그리드. 데이터·API는 데스크톱 index.html과 동일. */
+:root{--bg:#0d1117;--card:#161b22;--line:#21262d;--tx:#e6edf3;--dim:#8b949e;
+  --red:#f0616a;--acc:#58a6ff;--grn:#3fb950;--amb:#d29922}
+*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--tx);font-family:-apple-system,'Noto Sans KR','Malgun Gothic',sans-serif;
+  font-size:13px;padding-bottom:40px}
+.num{font-variant-numeric:tabular-nums}
+.pos{color:var(--red)}.neg{color:var(--acc)}.flat{color:var(--dim)}
+.gz{color:var(--grn)}
+
+header{position:sticky;top:0;z-index:10;background:#161b22ee;backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);padding:8px 10px}
+.hrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.itab{padding:4px 10px;border:1px solid var(--line);border-radius:14px;font-size:12px;color:var(--dim);font-weight:700}
+.itab.on{background:var(--acc);color:#04121f;border-color:var(--acc)}
+.badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:9px;margin-left:auto}
+.b-live{background:#12351c;color:var(--grn)}.b-off{background:#3d1418;color:var(--red)}
+.prow{display:flex;align-items:baseline;gap:10px;margin-top:5px}
+.cur{font-size:26px;font-weight:800;letter-spacing:-.5px}
+.chg{font-size:13px;font-weight:700}
+.hsub{margin-left:auto;font-size:10px;color:var(--dim);text-align:right;line-height:1.4}
+
+.wrap{padding:8px;display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+/* 세로(1열): 래퍼를 투명화(display:contents)하고 카드 순서를 트레이딩 우선순위로 재배열
+   — 호가 → 테이프 → 체결이력 → 모드 → 차트 → 스코어 (2026-07-20 회원 피드백: 체결이력이 안 보임) */
+.colL,.colR{display:contents}
+.c-dom{order:1}.c-tape{order:2}.c-fill{order:3}.c-modes{order:4}.c-chart{order:5}.c-score{order:6}
+@media(min-width:600px){ /* 폴드 내부(펼침) — 2열, 원래 배치 복원 */
+  .wrap{grid-template-columns:minmax(0,5fr) minmax(0,6fr)}
+  .colL,.colR{display:flex;flex-direction:column;gap:8px;min-width:0}
+  .card{order:0}
+}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 10px;min-width:0}
+.ct{font-size:11px;font-weight:800;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between;align-items:baseline}
+.ct .r{font-size:10px;font-weight:600}
+
+canvas{display:block;width:100%;max-width:100%;height:130px}
+
+/* 호가 래더 */
+table{width:100%;border-collapse:collapse;font-size:12px}
+.dom td{padding:2.5px 4px;border-bottom:1px solid #1a2029;position:relative}
+.dom .px{text-align:center;font-weight:800;font-size:13px;width:34%}
+.dom .pct{display:block;font-size:9px;font-weight:600;opacity:.8}
+.dom .qa{text-align:right;color:var(--acc)}
+.dom .qb{text-align:left;color:var(--red)}
+.dom .cnt{color:var(--dim);font-size:9px;margin:0 3px}
+.dom .bar{display:inline-block;height:9px;border-radius:2px;vertical-align:middle;opacity:.35}
+.dom tr.cur td{background:#1c2635}
+.dom .mid td{background:#10151d;color:var(--dim);font-size:10px;text-align:center;padding:3px}
+
+/* 테이프 */
+.tape{max-height:230px;overflow-y:auto;font-size:12px}
+.tape .row{display:flex;gap:6px;padding:2px 0;border-bottom:1px solid #151a22}
+.tape .t{color:var(--dim);font-size:10px;flex:0 0 62px}
+.tape .p{flex:0 0 72px;text-align:right;font-weight:700}
+.tape .v{flex:1;text-align:right}
+.tape .s{flex:0 0 30px;text-align:right;font-size:11px;font-weight:700}
+.bid{color:var(--red)}.ask{color:var(--acc)}
+
+/* 스코어/피처 */
+.strack{position:relative;height:10px;background:#0a0e14;border-radius:5px;overflow:hidden;margin:4px 0}
+.strack .z{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--line)}
+.strack .f{position:absolute;top:0;bottom:0;border-radius:5px}
+.bk{font-size:10px;color:var(--dim);word-break:break-all;line-height:1.5}
+.feat{display:flex;align-items:center;gap:6px;padding:2px 0}
+.feat .k{flex:0 0 74px;font-size:10px;color:var(--dim)}
+.feat .track{flex:1;position:relative;height:7px;background:#0a0e14;border-radius:4px;overflow:hidden}
+.feat .f{position:absolute;top:0;bottom:0}
+.feat .v{flex:0 0 44px;text-align:right;font-size:11px}
+
+/* 모드 그리드 */
+.modes{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+@media(min-width:390px){.modes{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:600px){.modes{grid-template-columns:repeat(3,1fr)}}
+.mcard{background:#10151d;border:1px solid var(--line);border-left-width:3px;border-radius:7px;padding:5px 7px}
+.mcard.up{border-left-color:var(--grn)}.mcard.down{border-left-color:var(--red)}.mcard.z{border-left-color:var(--line)}
+.mcard .mn{font-size:10px;font-weight:800;display:flex;justify-content:space-between}
+.mcard .mn .pos-pill{font-size:8px;font-weight:800;padding:1px 5px;border-radius:5px;background:var(--amb);color:#1d1503}
+.mcard .mp{font-size:14px;font-weight:800;margin-top:2px}
+.mcard .ms{font-size:9px;color:var(--dim)}
+
+/* 체결이력 */
+.fillt{font-size:11px}
+.fillt th{color:var(--dim);font-weight:600;text-align:left;padding:2px 4px;border-bottom:1px solid var(--line);font-size:10px}
+.fillt td{padding:2.5px 4px;border-bottom:1px solid #151a22}
+.fillbox{max-height:300px;overflow-y:auto}
+.chips{display:flex;gap:5px;overflow-x:auto;padding-bottom:4px;margin-bottom:4px}
+.chip{flex-shrink:0;padding:2px 9px;border:1px solid var(--line);border-radius:11px;font-size:10px;color:var(--dim);font-weight:700;white-space:nowrap}
+.chip.on{background:#1c2635;color:var(--tx);border-color:var(--acc)}
+.kpill{font-size:9px;font-weight:700;padding:1px 5px;border-radius:5px}
+.k-e{background:#1c2635;color:var(--acc)}.k-t{background:#12351c;color:var(--grn)}
+.k-d{background:#3d1418;color:var(--red)}.k-s{background:#3a2a10;color:var(--amb)}
+.empty{color:var(--dim);text-align:center;padding:12px;font-size:11px}
+
+footer{position:fixed;left:0;right:0;bottom:0;background:#10151d;border-top:1px solid var(--line);
+  padding:5px 10px;font-size:10px;color:var(--dim);display:flex;gap:12px;justify-content:space-between}
+</style>
+</head>
+<body>
+<header>
+  <div class="hrow">
+    <span id="itabs"></span>
+    <span class="badge b-off" id="conn">연결 중…</span>
+  </div>
+  <div class="prow">
+    <span class="cur num" id="cur" style="color:var(--dim);font-size:14px">가격 대기</span>
+    <span class="chg num" id="chg"></span>
+    <span class="hsub" id="hsub"></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="colL">
+    <div class="card c-dom">
+      <div class="ct"><span>호가 5단</span><span class="r num" id="totrem">—</span></div>
+      <table class="dom"><tbody id="dom"><tr><td class="empty">호가 대기</td></tr></tbody></table>
+    </div>
+    <div class="card c-tape">
+      <div class="ct"><span>실시간 체결</span></div>
+      <div class="tape" id="tape"><div class="empty">체결 대기</div></div>
+    </div>
+    <div class="card c-fill">
+      <div class="ct"><span>오늘 체결이력</span><span class="r num" id="fcnt"></span></div>
+      <div class="chips" id="chips"></div>
+      <div class="fillbox"><table class="fillt">
+        <thead><tr><th>시각</th><th>모드</th><th>방향</th><th>유형</th><th>가격</th><th style="text-align:right">틱</th></tr></thead>
+        <tbody id="fills"><tr><td class="empty" colspan="6">체결 없음</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="colR">
+    <div class="card c-chart">
+      <div class="ct"><span>당일 차트</span><span class="r" id="chtR"></span></div>
+      <canvas id="chart" width="640" height="240"></canvas>
+    </div>
+    <div class="card c-score">
+      <div class="ct"><span>스코어</span><span class="r num" id="scv">0.00</span></div>
+      <div class="strack"><span class="z"></span><span class="f" id="scf"></span></div>
+      <div class="bk" id="bk">—</div>
+      <div id="feats" style="margin-top:5px"></div>
+    </div>
+    <div class="card c-modes">
+      <div class="ct"><span>모드 현황</span><span class="r num" id="msum"></span></div>
+      <div class="modes" id="modes"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span id="frate">tick —/s</span><span id="fcol">수집 —</span><span id="fup">가동 —</span>
+</footer>
+
+<script>
+'use strict';
+function $(id){return document.getElementById(id)}
+function nf(x){return (x==null||isNaN(x))?'—':Number(x).toLocaleString('ko-KR')}
+function f2(x){return (x==null||isNaN(x))?'—':Number(x).toFixed(2)}
+function cls(v){return v>0?'pos':(v<0?'neg':'flat')}
+
+var SYM='', SYM_INIT=false, FILTER='ALL', lastFills=[], INSTS=[];
+
+function q(){return SYM?('?sym='+encodeURIComponent(SYM)):''}
+function pick(code){SYM=code; drawTabs(); }
+
+function drawTabs(){
+  $('itabs').innerHTML=INSTS.map(function(it){
+    var nm=it.code.indexOf('MNQ')===0?'MNQ':(it.code.indexOf('A05')===0?'미니':it.code);
+    return '<span class="itab'+(it.on?' on':'')+'" onclick="pick(\''+it.code+'\')">'+nm+'</span>';
+  }).join('');
+}
+
+function render(s){
+  var b=s.boot||{}, lt=s.lastTick||{}, f=s.features||{}, col=s.collect||{}, c=s.contract||{};
+  // 종목 탭 (첫 응답에서 MNQ 자동 선택 — 롤오버 무관 prefix 매칭)
+  INSTS=(s.instruments||[]).map(function(it){return {code:it.code, on:it.code===c.futcode}});
+  if(!SYM_INIT){ SYM_INIT=true;
+    var mnq=INSTS.filter(function(it){return it.code.indexOf('MNQ')===0})[0];
+    if(mnq&&SYM===''){ SYM=mnq.code; return; } }
+  drawTabs();
+  $('conn').textContent=b.loggedIn?('LIVE '+(b.loginCode||'')):'미연결';
+  $('conn').className='badge '+(b.loggedIn?'b-live':'b-off');
+  if(lt.price!=null){
+    $('cur').textContent=f2(lt.price);
+    $('cur').style.fontSize='';
+    var up=lt.change>0, dn=lt.change<0;
+    $('cur').style.color=up?'var(--red)':(dn?'var(--acc)':'var(--tx)');
+    $('chg').textContent=(up?'▲':(dn?'▼':''))+f2(Math.abs(lt.change||0))+' ('+(lt.drate>0?'+':'')+f2(lt.drate)+'%)';
+    $('chg').style.color=$('cur').style.color;
+  } else { var cu=$('cur'); cu.textContent='가격 대기'; cu.style.color='var(--dim)'; cu.style.fontSize='14px'; $('chg').textContent=''; }
+  $('hsub').innerHTML=(f.stamp||'')+'<br>micro '+(f.microDevTicks!=null?Number(f.microDevTicks).toFixed(2):'—')+'틱 · SP '+f2(f.spread);
+
+  // 호가 래더
+  var qk=s.book, rows=[], i;
+  var prevClose=(lt.price!=null&&lt.change!=null)?(Number(lt.price)-Number(lt.change)):0;
+  if(qk&&qk.offerHo){
+    var maxR=1;
+    for(i=0;i<5;i++) maxR=Math.max(maxR,qk.offerRem[i],qk.bidRem[i]);
+    var bar=function(v,cl){return '<span class="bar" style="width:'+Math.max(2,Math.round(v/maxR*54))+'px;background:'+cl+'"></span>'};
+    var pxCell=function(px){
+      var p=prevClose>0?(((px/prevClose)-1)*100):null;
+      var co=p==null?'var(--tx)':(p>0?'var(--red)':(p<0?'var(--acc)':'var(--tx)'));
+      return '<td class="px num" style="color:'+co+'">'+f2(px)+(p!=null?'<span class="pct">'+(p>0?'+':'')+p.toFixed(2)+'%</span>':'')+'</td>';
+    };
+    var last=Number(lt.price)||0;
+    for(i=4;i>=0;i--){
+      var on1=last>0&&Math.abs(qk.offerHo[i]-last)<0.001;
+      rows.push('<tr'+(on1?' class="cur"':'')+'><td class="qa num">'+nf(qk.offerRem[i])+bar(qk.offerRem[i],'var(--acc)')+'<span class="cnt">'+nf(qk.offerCnt[i])+'</span></td>'+pxCell(qk.offerHo[i])+'<td></td></tr>');
+    }
+    var ht=qk.hotime||''; if(ht.length>=6) ht=ht.slice(0,2)+':'+ht.slice(2,4)+':'+ht.slice(4,6);
+    rows.push('<tr class="mid"><td colspan="3">'+ht+(qk.danhochk==='1'?' · 단일가':'')+'</td></tr>');
+    for(i=0;i<5;i++){
+      var on2=last>0&&Math.abs(qk.bidHo[i]-last)<0.001;
+      rows.push('<tr'+(on2?' class="cur"':'')+'><td></td>'+pxCell(qk.bidHo[i])+'<td class="qb num"><span class="cnt">'+nf(qk.bidCnt[i])+'</span>'+bar(qk.bidRem[i],'var(--red)')+nf(qk.bidRem[i])+'</td></tr>');
+    }
+    $('dom').innerHTML=rows.join('');
+    $('totrem').textContent=nf(qk.totOfferRem)+' / '+nf(qk.totBidRem);
+  } else { $('dom').innerHTML='<tr><td class="empty">호가 없음 (휴장/무수신)</td></tr>'; $('totrem').textContent='—'; }
+
+  // 테이프
+  var tape=s.tape||[];
+  $('tape').innerHTML=tape.length?tape.slice(0,40).map(function(t){
+    var buy=t.cgubun==='+'||t.cgubun==='2';
+    return '<div class="row"><span class="t num">'+(t.recvAt||t.chetime||'')+'</span><span class="p num '+(buy?'bid':'ask')+'">'+f2(t.price)+'</span><span class="v num">'+nf(t.cvolume)+'</span><span class="s '+(buy?'bid':'ask')+'">'+(buy?'매수':'매도')+'</span></div>';
+  }).join(''):'<div class="empty">체결 없음 (휴장/무수신)</div>';
+
+  // 스코어 + 피처
+  var sig=s.signal||{};
+  var sc=sig.score||0, w=Math.min(50,Math.abs(sc)*50);
+  var sf=$('scf');
+  sf.style.left=sc>=0?'50%':(50-w)+'%'; sf.style.width=w+'%';
+  sf.style.background=sc>=0?'var(--grn)':'var(--red)';
+  $('scv').textContent=Number(sc).toFixed(2);
+  $('bk').textContent=(sig.breakdown||'—')+(sig.paramsLabel?(' · '+sig.paramsLabel):'');
+  var ov=!!(c&&c.overseas);
+  var items=[['OFI 5s z',(f.ofi5sZ||0)/3,f.ofi5sZ],['QI 5단',f.qiW5||0,f.qiW5],['micro(틱)',f.microDevTicks||0,f.microDevTicks],['urgency',Math.min(1,(f.urgency||0)*10),f.urgency]];
+  if(!ov) items.splice(3,0,['basis z',-(f.basisZ||0)/3,f.basisZ]);
+  $('feats').innerHTML=items.map(function(it){
+    var v=Math.max(-1,Math.min(1,it[1]||0)), ww=Math.abs(v)*50;
+    return '<div class="feat"><span class="k">'+it[0]+'</span><div class="track"><div class="f" style="'+(v>=0?'left:50%':'right:50%')+';width:'+ww+'%;background:'+(v>=0?'var(--grn)':'var(--red)')+'"></div></div><span class="v num">'+(it[2]!=null?Number(it[2]).toFixed(2):'—')+'</span></div>';
+  }).join('');
+
+  // 모드 현황
+  var modes=sig.modes||[], tot=0, holding=0;
+  $('modes').innerHTML=modes.map(function(m){
+    tot+=m.pnlTicks||0; if(m.position) holding++;
+    var cl=m.pnlTicks>0?'up':(m.pnlTicks<0?'down':'z');
+    return '<div class="mcard '+cl+'"><div class="mn"><span>'+m.mode+'</span>'+(m.position?'<span class="pos-pill">'+m.position+'</span>':'')+'</div>'+
+      '<div class="mp num '+cls(m.pnlTicks)+'">'+(m.pnlTicks>0?'+':'')+Math.round(m.pnlTicks||0)+'틱</div>'+
+      '<div class="ms num">'+(m.trades||0)+'건 · '+(m.winRate!=null?Number(m.winRate).toFixed(0):0)+'%</div></div>';
+  }).join('');
+  $('msum').innerHTML='합산 <b class="'+cls(tot)+'">'+(tot>0?'+':'')+Math.round(tot)+'틱</b> · 보유 '+holding;
+
+  // 체결이력 (모드 필터 칩)
+  lastFills=sig.fills||[];
+  var names={}; lastFills.forEach(function(x){names[x.mode]=1});
+  var chips=['ALL'].concat(Object.keys(names));
+  $('chips').innerHTML=chips.map(function(m){
+    return '<span class="chip'+(m===FILTER?' on':'')+'" onclick="setF(\''+m+'\')">'+m+'</span>';
+  }).join('');
+  renderFills();
+
+  // 푸터
+  $('frate').textContent='tick '+nf(col.tickRate)+'/s · depth '+nf(col.depthRate)+'/s';
+  $('fcol').textContent='수집 '+nf(col.tickCount)+' · 오류 '+nf(col.insertErrors);
+  $('fup').textContent='가동 '+(b.startedAt||'')+' ~ '+Math.floor((b.uptimeSec||0)/60)+'분';
+}
+
+function kindPill(k){
+  var m={ENTRY:['진입','k-e'],TIME:['시간','k-t'],DISASTER:['재해','k-d'],STOP:['손절','k-s']}[k]||[k,'k-e'];
+  return '<span class="kpill '+m[1]+'">'+m[0]+'</span>';
+}
+function setF(m){FILTER=m; render._chipOnly=true;
+  var ch=$('chips').children, i;
+  for(i=0;i<ch.length;i++) ch[i].className='chip'+(ch[i].textContent===m?' on':'');
+  renderFills();
+}
+function renderFills(){
+  var fl=FILTER==='ALL'?lastFills:lastFills.filter(function(x){return x.mode===FILTER});
+  $('fcnt').textContent=fl.length+'건';
+  $('fills').innerHTML=fl.length?fl.slice(0,60).map(function(x){
+    return '<tr><td class="num" style="color:var(--dim)">'+String(x.time).slice(0,8)+'</td><td>'+x.mode+'</td>'+
+      '<td class="'+(x.side==='LONG'?'bid':'ask')+'">'+(x.side==='LONG'?'롱':'숏')+'</td><td>'+kindPill(x.kind)+'</td>'+
+      '<td class="num">'+f2(x.price)+'</td><td class="num" style="text-align:right"><b class="'+cls(x.pnlTicks)+'">'+(x.kind==='ENTRY'?'—':Number(x.pnlTicks).toFixed(1))+'</b></td></tr>';
+  }).join(''):'<tr><td class="empty" colspan="6">체결 없음</td></tr>';
+}
+
+function drawChart(pts){
+  var cv=$('chart'), ctx=cv.getContext('2d');
+  var W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  if(!pts||pts.length<2){ctx.fillStyle='#8b949e';ctx.font='12px monospace';ctx.fillText('데이터 대기 중',10,20);return}
+  var pMin=Infinity,pMax=-Infinity,i;
+  for(i=0;i<pts.length;i++){ if(pts[i].p>0){pMin=Math.min(pMin,pts[i].p);pMax=Math.max(pMax,pts[i].p)} }
+  if(pMax-pMin<0.001){pMax+=0.5;pMin-=0.5}
+  var pad=6;
+  var x=function(i){return pad+(W-2*pad)*i/(pts.length-1)};
+  var yP=function(v){return pad+(H-2*pad)*(1-(v-pMin)/(pMax-pMin))};
+  var up=pts[pts.length-1].p>=pts[0].p;
+  ctx.strokeStyle=up?'#e05a5a':'#5b8cff';ctx.lineWidth=1.6;ctx.beginPath();
+  var st=false;
+  for(i=0;i<pts.length;i++){ if(pts[i].p<=0)continue; var xx=x(i),yy=yP(pts[i].p); if(!st){ctx.moveTo(xx,yy);st=true}else ctx.lineTo(xx,yy) }
+  ctx.stroke();
+  $('chtR').textContent=f2(pMin)+' ~ '+f2(pMax);
+}
+
+var _p=false,_pc=false;
+function poll(){
+  if(_p||document.hidden) return; _p=true;
+  fetch('/api/state'+q()).then(function(r){return r.json()}).then(render).catch(function(){
+    $('conn').textContent='API 오류'; $('conn').className='badge b-off';
+  }).then(function(){_p=false});
+}
+function pollChart(){
+  if(_pc||document.hidden) return; _pc=true;
+  fetch('/api/chart'+q()).then(function(r){return r.json()}).then(drawChart).catch(function(){}).then(function(){_pc=false});
+}
+poll(); setInterval(poll,1000);
+pollChart(); setInterval(pollChart,3000);
+document.addEventListener('visibilitychange',function(){ if(!document.hidden){poll();pollChart();} });
+</script>
+</body>
+</html>

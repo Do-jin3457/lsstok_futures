@@ -28,12 +28,18 @@ namespace LS.Futures
         private XAQuery _t3518;   // 해외 기초지수(S&P500/나스닥100) — 해외 basis 계산용 (2026-07-04, 30초 스로틀 조회)
         private XAQuery _o3103;   // 해외선물 N분 차트(과거조회, MES/MNQ) — 다국면 백테스트용 (2026-07-05)
         private XAQuery _t3518Hist;   // 해외지수(S&P500/나스닥100) 과거 N분 차트 — MES/MNQ 계약 히스토리 미지원 대안(2026-07-05, kind=S/jgbn=3). 라이브 베이시스용 _t3518과 분리(오염 방지).
-        // 해외선물 → 기초지수 심볼 (t3518 kind=S). NDX는 추정 — 월요일 US장 검증.
+        private XAQuery _t3518Probe;   // 진단 전용(전체 필드 덤프, 2026-07-07) — 어느 jgbn/필드가 실제 지수레벨을 주는지 확인용.
+        // 해외선물 → 기초지수 심볼 (t3518 kind=S). 2026-07-07 라이브 실측: NAS@NDX 정상작동(실데이터).
         private readonly System.Collections.Generic.Dictionary<string, string> _futToIdx = new System.Collections.Generic.Dictionary<string, string>
         {
             { "MESU26", "SPI@SPX" },   // MES 기초 = S&P 500
-            { "MNQU26", "NAS@NDX" },   // MNQ 기초 = 나스닥100(추정)
+            { "MNQU26", "NAS@NDX" },   // MNQ 기초 = 나스닥100
         };
+        // t3518 지수는 선물 대비 1/100 스케일로 리턴됨(2026-07-07 라이브 실측: NAS@NDX=297.93 vs MNQ선물=29790, ×100 일치).
+        // basis 계산 전 이 배율로 선물 스케일에 맞춤. (아직 신호엔 미반영=관측만, cBasis=0)
+        private const double IdxScale = 100.0;
+        // t3518 조회 스로틀(심볼당 ms) — 스펙: 초당 1건/10분당 200건 → 심볼당 6초가 상한(2심볼). 8s=150건/10분(여유).
+        private const long IdxQueryThrottleMs = 8000;
         private readonly System.Collections.Generic.Dictionary<string, double> _idxPrice = new System.Collections.Generic.Dictionary<string, double>();
         private readonly System.Collections.Generic.Dictionary<string, long> _lastIdxReqMs = new System.Collections.Generic.Dictionary<string, long>();
         private string _lastIdxSym = "";
@@ -82,6 +88,9 @@ namespace LS.Futures
             _t3518Hist = new XAQuery();
             _t3518Hist.ReceiveData += OnRecv_t3518Hist;
             _t3518Hist.ReceiveMessage += (isErr, code, msg) => _log($"[t3518h] 서버메시지 err={isErr} code={code} {msg}");
+            _t3518Probe = new XAQuery();   // 진단 전용(전체 필드 덤프) — 라이브 _t3518과 분리
+            _t3518Probe.ReceiveData += OnRecv_t3518Probe;
+            _t3518Probe.ReceiveMessage += (isErr, code, msg) => _log($"[t3518p] 서버메시지 err={isErr} code={code} {msg}");
         }
 
         /// <summary>해외지수(S&amp;P500=SPI@SPX, 나스닥100=NAS@NDX) 과거 N분 차트 — MES/MNQ 계약 자체 히스토리가 안 되는 대안(2026-07-05).</summary>
@@ -327,6 +336,20 @@ namespace LS.Futures
                 int i = cnt - 1;
                 string respSym = Trimmed(_t3518.GetFieldData("t3518OutBlock1", "symbol", i));
                 if (string.IsNullOrEmpty(respSym)) respSym = _lastIdxSym;   // 필드 비면 폴백
+                // 진단 덤프(2026-07-07) — 어느 필드가 실제 지수레벨인지 확인용. price가 74.83 등 이상값이라 전체 필드 로깅.
+                _log($"[t3518dump] req={_lastIdxSym} cnt={cnt} sym={respSym}"
+                   + $" O={Trimmed(_t3518.GetFieldData("t3518OutBlock1","open",i))}"
+                   + $" H={Trimmed(_t3518.GetFieldData("t3518OutBlock1","high",i))}"
+                   + $" L={Trimmed(_t3518.GetFieldData("t3518OutBlock1","low",i))}"
+                   + $" price={Trimmed(_t3518.GetFieldData("t3518OutBlock1","price",i))}"
+                   + $" chg={Trimmed(_t3518.GetFieldData("t3518OutBlock1","change",i))}"
+                   + $" up={Trimmed(_t3518.GetFieldData("t3518OutBlock1","uprate",i))}"
+                   + $" vol={Trimmed(_t3518.GetFieldData("t3518OutBlock1","volume",i))}"
+                   + $" bid={Trimmed(_t3518.GetFieldData("t3518OutBlock1","bidho",i))}"
+                   + $" ask={Trimmed(_t3518.GetFieldData("t3518OutBlock1","offerho",i))}"
+                   + $" date={Trimmed(_t3518.GetFieldData("t3518OutBlock1","date",i))}"
+                   + $" time={Trimmed(_t3518.GetFieldData("t3518OutBlock1","time",i))}"
+                   + $" ko={Trimmed(_t3518.GetFieldData("t3518OutBlock1","kotime",i))}");
                 double px;
                 if (double.TryParse(Trimmed(_t3518.GetFieldData("t3518OutBlock1", "price", i)), out px) && px > 0)
                 {
@@ -345,6 +368,51 @@ namespace LS.Futures
                 var h3 = OnIndexProbe; if (h3 != null) h3(_lastIdxSym, false, "예외: " + ex.Message);
             }
             finally { _t3518Busy = false; }   // 응답 도착(성공/실패 불문) → 다음 요청 허용
+        }
+
+        // ── t3518 진단 probe (전체 필드 덤프, 2026-07-07) — 라이브 경로 무손상 ──
+        private string _probeSym = "", _probeJgbn = "0";
+        /// <summary>지정 심볼·jgbn으로 t3518 조회 후 OutBlock1 전체 필드를 로그로 덤프. 어느 필드/조회구분이 실제 지수레벨을 주는지 확인용.</summary>
+        public void ProbeIndexFull(string symbol, string jgbn)
+        {
+            try
+            {
+                _probeSym = symbol; _probeJgbn = jgbn;
+                _t3518Probe.LoadFromResFile(ResPath.Get("t3518.res"));
+                _t3518Probe.SetFieldData("t3518InBlock", "kind", 0, "S");
+                _t3518Probe.SetFieldData("t3518InBlock", "symbol", 0, symbol);
+                _t3518Probe.SetFieldData("t3518InBlock", "cnt", 0, "1");
+                _t3518Probe.SetFieldData("t3518InBlock", "jgbn", 0, jgbn);
+                _t3518Probe.SetFieldData("t3518InBlock", "nmin", 0, "1");
+                int rc = _t3518Probe.Request(false);
+                if (rc < 0) { _log($"[t3518p] {symbol} jgbn={jgbn} Request 거부 rc={rc}"); var h = OnIndexProbe; if (h != null) h(symbol, false, $"Request 거부 rc={rc}"); }
+            }
+            catch (Exception ex) { _log($"[t3518p] {symbol} 요청 오류: {ex.Message}"); var h = OnIndexProbe; if (h != null) h(symbol, false, "예외: " + ex.Message); }
+        }
+
+        private void OnRecv_t3518Probe(string szTrCode)
+        {
+            if (szTrCode != "t3518") return;
+            try
+            {
+                int cnt = _t3518Probe.GetBlockCount("t3518OutBlock1");
+                if (cnt <= 0) { _log($"[t3518p] {_probeSym} jgbn={_probeJgbn} → 0건(심볼무효/휴장)"); var h0 = OnIndexProbe; if (h0 != null) h0(_probeSym, false, $"jgbn={_probeJgbn} 0건"); return; }
+                int i = cnt - 1;
+                string open = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "open", i));
+                string high = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "high", i));
+                string low = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "low", i));
+                string price = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "price", i));
+                string change = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "change", i));
+                string uprate = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "uprate", i));
+                string sym = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "symbol", i));
+                string date = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "date", i));
+                string time = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "time", i));
+                string kotime = Trimmed(_t3518Probe.GetFieldData("t3518OutBlock1", "kotime", i));
+                string detail = $"cnt={cnt} sym={sym} O={open} H={high} L={low} price={price} chg={change} up={uprate} date={date} time={time} ko={kotime}";
+                _log($"[t3518p] {_probeSym} jgbn={_probeJgbn} → {detail}");
+                var h1 = OnIndexProbe; if (h1 != null) h1(_probeSym, true, $"jgbn={_probeJgbn} {detail}");
+            }
+            catch (Exception ex) { _log($"[t3518p] {_probeSym} 파싱 오류: {ex.Message}"); var h3 = OnIndexProbe; if (h3 != null) h3(_probeSym, false, "파싱예외: " + ex.Message); }
         }
 
         // ── t8465 선물/옵션 N분 과거 차트 (연속조회로 다장세 수집) ──
@@ -511,10 +579,10 @@ namespace LS.Futures
                 {
                     double ip;
                     if (_idxPrice.TryGetValue(idxSym, out ip) && ip > 0)
-                        d.Kasis = d.Price - (decimal)ip;   // basis = 선물 − 기초지수
+                        d.Kasis = d.Price - (decimal)(ip * IdxScale);   // basis = 선물 − 기초지수(×100 스케일 보정, 2026-07-07)
                     long nowMs = recvTicks / (Stopwatch.Frequency / 1000);
                     long last; _lastIdxReqMs.TryGetValue(idxSym, out last);
-                    if (nowMs - last > 30000) { _lastIdxReqMs[idxSym] = nowMs; QueryIndex(idxSym); }
+                    if (nowMs - last > IdxQueryThrottleMs) { _lastIdxReqMs[idxSym] = nowMs; QueryIndex(idxSym); }
                 }
                 var h = OnTick; if (h != null) h(d);
             }

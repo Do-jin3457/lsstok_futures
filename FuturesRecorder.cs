@@ -296,58 +296,70 @@ namespace LS.Futures
         public DateTime StartedAt { get { return _startedAt; } }
 
         /// <summary>
-        /// 재시작 정합성(v5.1): 당일 확정 성적 로드 + 고아 ENTRY(청산 없이 프로세스 종료) 'RESTART' 마감.
-        /// 반환: futcode → [pnlTicks 합, 청산 수, 승 수]. STA 부팅 시 1회 호출(flush 타이머 시작 전).
+        /// 재시작 정합성(v5.1, v5.24부터 모드별 분리): 당일 확정 성적 로드 + 고아 ENTRY(청산 없이 프로세스 종료) 'RESTART' 마감.
+        /// 반환: futcode → (mode → [pnlTicks 합, 청산 수, 승 수]). STA 부팅 시 1회 호출(flush 타이머 시작 전).
+        /// ⚠️v5.24 이전엔 futcode로만 GROUP BY해서 V1/TREND/TREND+OB 성적이 한데 섞이고, 고아 RESTART도
+        ///   전부 mode='V1'로 하드코딩돼 있었음 — TREND/TREND+OB는 애초에 복원 대상에서 빠져있던 게 근본원인
+        ///   (그래서 재시작마다 대시보드 "누적 성적" 카드가 0으로 보였음, 회원 지적 7/6).
         /// </summary>
-        public Dictionary<string, double[]> RestoreDay(string tradeDate)
+        public Dictionary<string, Dictionary<string, double[]>> RestoreDay(string tradeDate)
         {
-            var result = new Dictionary<string, double[]>();
+            var result = new Dictionary<string, Dictionary<string, double[]>>();
             Monitor.Enter(_flushLock);   // flush 타이머와 _conn 경합 방지
             try
             {
                 using (var cmd = _conn.CreateCommand())
                 {
-                    // 고아 ENTRY 마감: 종목별 ENTRY 수 > 청산 수 만큼 RESTART 행 삽입(pnl=0 — 미확정분 성적 미반영).
+                    // 고아 ENTRY 마감: 종목×모드별 ENTRY 수 > 청산 수 만큼 RESTART 행 삽입(pnl=0 — 미확정분 성적 미반영).
                     // ⚠️ 청산 수에 RESTART도 포함해야 함(v5.3 fix) — 안 그러면 이전 RESTART가 마감한 ENTRY가
                     //    매 재시작마다 미청산으로 부활해 유령 RESTART가 무한 누적됨(회원 지적 7/4, "?" 3개 버그).
-                    cmd.CommandText = @"SELECT COALESCE(futcode,''),
+                    cmd.CommandText = @"SELECT COALESCE(futcode,''), mode,
                                            SUM(CASE WHEN kind='ENTRY' THEN 1 ELSE 0 END),
                                            SUM(CASE WHEN kind!='ENTRY' THEN 1 ELSE 0 END)
-                                        FROM fut_paper_fills WHERE trade_date=@d GROUP BY COALESCE(futcode,'')";
+                                        FROM fut_paper_fills WHERE trade_date=@d GROUP BY COALESCE(futcode,''), mode";
                     cmd.Parameters.Add(new SQLiteParameter("@d", tradeDate));
-                    var orphans = new List<string>();
+                    var orphans = new List<string[]>();
                     using (var rd = cmd.ExecuteReader())
                         while (rd.Read())
                         {
-                            long entries = rd.GetInt64(1), exits = rd.GetInt64(2);
-                            for (long i = exits; i < entries; i++) orphans.Add(rd.GetString(0));
+                            long entries = rd.GetInt64(2), exits = rd.GetInt64(3);
+                            for (long i = exits; i < entries; i++) orphans.Add(new[] { rd.GetString(0), rd.GetString(1) });
                         }
-                    foreach (var code in orphans)
+                    foreach (var o in orphans)
                     {
+                        string code = o[0], mode = o[1];
                         using (var ins = _conn.CreateCommand())
                         {
                             ins.CommandText = @"INSERT INTO fut_paper_fills (trade_date,time,mode,side,kind,price,pnl_ticks,score,reason,futcode)
-                                                VALUES (@d,@t,'V1','?','RESTART',0,0,0,'재시작 고아 ENTRY 마감',@fc)";
+                                                VALUES (@d,@t,@m,'?','RESTART',0,0,0,'재시작 고아 ENTRY 마감',@fc)";
                             ins.Parameters.Add(new SQLiteParameter("@d", tradeDate));
                             ins.Parameters.Add(new SQLiteParameter("@t", DateTime.Now.ToString("HH:mm:ss.fff")));
+                            ins.Parameters.Add(new SQLiteParameter("@m", mode));
                             ins.Parameters.Add(new SQLiteParameter("@fc", code));
                             ins.ExecuteNonQuery();
                         }
-                        _log($"[recorder] 재시작 정합: {code} 고아 ENTRY → RESTART 마감");
+                        _log($"[recorder] 재시작 정합: {code}/{mode} 고아 ENTRY → RESTART 마감");
                     }
 
-                    // 당일 확정 성적 로드
+                    // 당일 확정 성적 로드 (종목×모드별)
                     using (var q = _conn.CreateCommand())
                     {
-                        // 거래수/pnl은 실제 청산(TIME/DISASTER/EOD)만 — ENTRY와 RESTART(시스템 마커)는 제외(v5.3 fix).
-                        q.CommandText = @"SELECT COALESCE(futcode,''), SUM(pnl_ticks), COUNT(*),
-                                             SUM(CASE WHEN pnl_ticks>0 THEN 1 ELSE 0 END)
+                        // 거래수/pnl은 실제 청산(TIME/DISASTER/EOD/STOP/EOD)만 — ENTRY와 RESTART(시스템 마커)는 제외(v5.3 fix).
+                        q.CommandText = @"SELECT COALESCE(futcode,''), mode, SUM(pnl_ticks), COUNT(*),
+                                             SUM(CASE WHEN pnl_ticks>0 THEN 1 ELSE 0 END), SUM(price)
                                           FROM fut_paper_fills
-                                          WHERE trade_date=@d AND kind NOT IN ('ENTRY','RESTART') GROUP BY COALESCE(futcode,'')";
+                                          WHERE trade_date=@d AND kind NOT IN ('ENTRY','RESTART') GROUP BY COALESCE(futcode,''), mode";
                         q.Parameters.Add(new SQLiteParameter("@d", tradeDate));
                         using (var rd = q.ExecuteReader())
                             while (rd.Read())
-                                result[rd.GetString(0)] = new[] { rd.IsDBNull(1) ? 0 : rd.GetDouble(1), (double)rd.GetInt64(2), (double)rd.GetInt64(3) };
+                            {
+                                string fc = rd.GetString(0), mode = rd.GetString(1);
+                                Dictionary<string, double[]> byMode;
+                                if (!result.TryGetValue(fc, out byMode)) { byMode = new Dictionary<string, double[]>(); result[fc] = byMode; }
+                                // [pnl, closes, wins, sumExitPx] — sumExitPx는 수수료 복원용(v5.32, 회원 지적 "수수료도 복원돼야").
+                                //   정률 수수료 재계산 근사: (entry+exit)≈2×exit — 오차 = pnl_pt×mult×pct ≈ 건당 1~2원, 무시 가능.
+                                byMode[mode] = new[] { rd.IsDBNull(2) ? 0 : rd.GetDouble(2), (double)rd.GetInt64(3), (double)rd.GetInt64(4), rd.IsDBNull(5) ? 0 : rd.GetDouble(5) };
+                            }
                     }
                 }
             }
@@ -393,6 +405,151 @@ namespace LS.Futures
             }
             catch (Exception ex) { _log("[recorder] fills 로드 오류: " + ex.Message); }
             finally { Monitor.Exit(_flushLock); }
+            return list;
+        }
+
+        // ── 히스토리 대시보드용 조회 (v5.21) ──
+
+        public sealed class DateSummary { public string Date; public double PnlTicks; public int Closes; }
+        public sealed class ModeSummary { public string Mode; public int Trades; public int Wins; public double PnlTicks; }
+
+        /// <summary>거래일 목록(최신순) — 히스토리 화면 좌측 날짜 리스트용. 날짜당 총 청산건수/PnL만(전 종목·전 모드 합산).</summary>
+        public List<DateSummary> GetTradeDates()
+        {
+            var list = new List<DateSummary>();
+            Monitor.Enter(_flushLock);
+            try
+            {
+                using (var cmd = _conn.CreateCommand())
+                {
+                    cmd.CommandText = @"SELECT trade_date, SUM(pnl_ticks), COUNT(*)
+                                        FROM fut_paper_fills
+                                        WHERE kind NOT IN ('ENTRY','RESTART')
+                                        GROUP BY trade_date ORDER BY trade_date DESC";
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read())
+                            list.Add(new DateSummary
+                            {
+                                Date = rd.GetString(0),
+                                PnlTicks = rd.IsDBNull(1) ? 0 : rd.GetDouble(1),
+                                Closes = (int)rd.GetInt64(2)
+                            });
+                }
+            }
+            catch (Exception ex) { _log("[recorder] 거래일 목록 조회 오류: " + ex.Message); }
+            finally { Monitor.Exit(_flushLock); }
+            return list;
+        }
+
+        /// <summary>특정 거래일의 전 종목·전 모드 체결 이력(시간순) — 히스토리 화면 상세 테이블용. RESTART(시스템 마커) 제외.</summary>
+        public List<PaperFill> GetFillsForDate(string tradeDate)
+        {
+            var list = new List<PaperFill>();
+            Monitor.Enter(_flushLock);
+            try
+            {
+                using (var cmd = _conn.CreateCommand())
+                {
+                    cmd.CommandText = @"SELECT time,mode,side,kind,price,pnl_ticks,score,reason,COALESCE(futcode,'')
+                                        FROM fut_paper_fills
+                                        WHERE trade_date=@d AND kind!='RESTART'
+                                        ORDER BY id ASC";
+                    cmd.Parameters.Add(new SQLiteParameter("@d", tradeDate));
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read())
+                            list.Add(new PaperFill
+                            {
+                                Code = rd.GetString(8),
+                                Time = rd.IsDBNull(0) ? "" : rd.GetString(0),
+                                Mode = rd.IsDBNull(1) ? "" : rd.GetString(1),
+                                Side = rd.IsDBNull(2) ? "" : rd.GetString(2),
+                                Kind = rd.IsDBNull(3) ? "" : rd.GetString(3),
+                                Price = rd.IsDBNull(4) ? 0 : rd.GetDouble(4),
+                                PnlTicks = rd.IsDBNull(5) ? 0 : rd.GetDouble(5),
+                                Score = rd.IsDBNull(6) ? 0 : rd.GetDouble(6),
+                                Reason = rd.IsDBNull(7) ? "" : rd.GetString(7)
+                            });
+                }
+            }
+            catch (Exception ex) { _log("[recorder] 일자별 체결 조회 오류: " + ex.Message); }
+            finally { Monitor.Exit(_flushLock); }
+            return list;
+        }
+
+        /// <summary>특정 거래일의 모드별(V1/TREND/TREND+OB) 성과 요약 — 히스토리 화면 카드용.</summary>
+        public List<ModeSummary> GetModeSummaryForDate(string tradeDate)
+        {
+            var list = new List<ModeSummary>();
+            Monitor.Enter(_flushLock);
+            try
+            {
+                using (var cmd = _conn.CreateCommand())
+                {
+                    cmd.CommandText = @"SELECT mode, COUNT(*), SUM(CASE WHEN pnl_ticks>0 THEN 1 ELSE 0 END), SUM(pnl_ticks)
+                                        FROM fut_paper_fills
+                                        WHERE trade_date=@d AND kind NOT IN ('ENTRY','RESTART')
+                                        GROUP BY mode";
+                    cmd.Parameters.Add(new SQLiteParameter("@d", tradeDate));
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read())
+                            list.Add(new ModeSummary
+                            {
+                                Mode = rd.IsDBNull(0) ? "" : rd.GetString(0),
+                                Trades = (int)rd.GetInt64(1),
+                                Wins = (int)rd.GetInt64(2),
+                                PnlTicks = rd.IsDBNull(3) ? 0 : rd.GetDouble(3)
+                            });
+                }
+            }
+            catch (Exception ex) { _log("[recorder] 모드별 일별요약 오류: " + ex.Message); }
+            finally { Monitor.Exit(_flushLock); }
+            return list;
+        }
+
+        public sealed class MidSeed { public DateTime At; public double Price; }
+
+        /// <summary>재시작 시 추세추종 가격버퍼(_mids) 즉시 복원용 — 최근 N분치 체결가를 1분 샘플로 반환(v5.25).
+        /// 이게 없으면 재시작마다 ER(횡보판별)이 33분 워밍업을 새로 거쳐야 해서, 재배포가 잦으면(오늘밤처럼) TREND류가
+        /// 계속 리셋되며 오래 멈춤 — 회원 지적("재빌드 직후만 반짝 거래되고 30분 지나면 안 됨")의 근본원인.</summary>
+        public List<MidSeed> GetRecentMidSeries(string futcode, string tradeDate, int minutes)
+        {
+            var list = new List<MidSeed>();
+            Monitor.Enter(_flushLock);
+            try
+            {
+                using (var cmd = _conn.CreateCommand())
+                {
+                    // 1분 버킷(recv_at 앞 5자=HH:mm)마다 마지막 틱만 — 최근 minutes개 버킷.
+                    cmd.CommandText = @"SELECT MAX(id) AS lastid
+                                        FROM fut_ticks WHERE trade_date=@d AND futcode=@fc AND price>0
+                                        GROUP BY substr(recv_at,1,5) ORDER BY lastid DESC LIMIT @lim";
+                    cmd.Parameters.Add(new SQLiteParameter("@d", tradeDate));
+                    cmd.Parameters.Add(new SQLiteParameter("@fc", futcode));
+                    cmd.Parameters.Add(new SQLiteParameter("@lim", minutes));
+                    var ids = new List<long>();
+                    using (var rd = cmd.ExecuteReader())
+                        while (rd.Read()) ids.Add(rd.GetInt64(0));
+
+                    foreach (var id in ids)
+                    {
+                        using (var q = _conn.CreateCommand())
+                        {
+                            q.CommandText = "SELECT recv_at, price FROM fut_ticks WHERE id=@id";
+                            q.Parameters.Add(new SQLiteParameter("@id", id));
+                            using (var rd2 = q.ExecuteReader())
+                                if (rd2.Read())
+                                {
+                                    TimeSpan ts;
+                                    if (TimeSpan.TryParse(rd2.GetString(0), out ts))
+                                        list.Add(new MidSeed { At = DateTime.Today.Add(ts), Price = rd2.GetDouble(1) });
+                                }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { _log("[recorder] 가격버퍼 시드 조회 오류: " + ex.Message); }
+            finally { Monitor.Exit(_flushLock); }
+            list.Sort((a, b) => a.At.CompareTo(b.At));
             return list;
         }
 

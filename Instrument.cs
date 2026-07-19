@@ -69,6 +69,8 @@ namespace LS.Futures
             _tape.Add(d);
             if (_tape.Count > TapeMax) _tape.RemoveAt(0);
             Features.OnTick(d);
+            Signals.OnTickRef((double)d.Price, (double)d.Drate);   // GAP 전일종가 역산 — drate 기반(7/14 부호버그 fix, change는 KRX서 무부호)
+            Signals.OnTickFlow(d.CGubun, d.CVolume);               // DFADE 120s 수급델타(7/15 — 체결 공격방향)
         }
 
         public void OnDepth(FH9Data d)

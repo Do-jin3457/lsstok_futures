@@ -149,6 +149,45 @@ namespace LS.Futures
                 logs = _logs.ToArray()
             };
         }
+
+        /// <summary>/api/history — 거래일 목록(최신순, 날짜당 총 청산건수/PnL).</summary>
+        public static object HistoryDates()
+        {
+            var r = Recorder;
+            var dates = r == null ? new List<FuturesRecorder.DateSummary>() : r.GetTradeDates();
+            return new
+            {
+                dates = dates.ConvertAll(d => new { date = d.Date, pnlTicks = d.PnlTicks, closes = d.Closes })
+            };
+        }
+
+        /// <summary>/api/history/day?date=YYYYMMDD — 해당 거래일의 모드별 요약 + 전 종목 체결 이력.</summary>
+        public static object HistoryDay(string date)
+        {
+            var r = Recorder;
+            if (r == null || string.IsNullOrEmpty(date))
+                return new { date = date ?? "", modes = new object[0], fills = new object[0] };
+
+            var modes = r.GetModeSummaryForDate(date);
+            var fills = r.GetFillsForDate(date);
+            return new
+            {
+                date = date,
+                modes = modes.ConvertAll(m => new
+                {
+                    mode = m.Mode,
+                    trades = m.Trades,
+                    wins = m.Wins,
+                    pnlTicks = m.PnlTicks,
+                    winRate = m.Trades > 0 ? (100.0 * m.Wins / m.Trades) : 0.0
+                }),
+                fills = fills.ConvertAll(x => new
+                {
+                    time = x.Time, futcode = x.Code, mode = x.Mode, side = x.Side, kind = x.Kind,
+                    price = x.Price, pnlTicks = x.PnlTicks, score = x.Score, reason = x.Reason
+                })
+            };
+        }
     }
 
     /// <summary>OWIN 구성 — /api/state·chart(?sym=) + 정적 원스크린(wwwroot).</summary>
@@ -178,6 +217,17 @@ namespace LS.Futures
                 if (path == "/state")
                 {
                     await ctx.Response.WriteAsync(JsonConvert.SerializeObject(FuturesApp.State(sym)));
+                    return;
+                }
+                if (path == "/history")
+                {
+                    await ctx.Response.WriteAsync(JsonConvert.SerializeObject(FuturesApp.HistoryDates()));
+                    return;
+                }
+                if (path == "/history/day")
+                {
+                    string date = ctx.Request.Query["date"];
+                    await ctx.Response.WriteAsync(JsonConvert.SerializeObject(FuturesApp.HistoryDay(date)));
                     return;
                 }
                 if (path == "/chart")

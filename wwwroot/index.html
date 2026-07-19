@@ -42,7 +42,7 @@
   .hts .qty-a{text-align:right}.hts .qty-b{text-align:left}
   .hts .cnt{font-size:10px;color:var(--dim);margin:0 4px}
   .hts .cur td{border:1px solid var(--yel);font-weight:700}
-  .tape{max-height:300px;overflow-y:auto}
+  .tape{max-height:560px;overflow-y:auto}   /* 7/13 밸런스: 좌컬럼 하단 빈칸을 테이프 확장으로 채움 */
   .tape .row{display:flex;gap:8px;padding:1px 2px;border-bottom:1px solid rgba(255,255,255,.03)}
   .tape .t{color:var(--dim);width:104px;flex-shrink:0}.tape .p{width:78px;text-align:right;flex-shrink:0}.tape .v{width:50px;text-align:right;color:var(--dim);flex-shrink:0}
   .gauge{position:relative;height:20px;background:#1a1d2a;border-radius:10px;overflow:hidden;margin:6px 0}
@@ -56,14 +56,87 @@
   .feat .v{width:64px;text-align:right}
   .kv{display:flex;justify-content:space-between;padding:2px 0}
   .kv .k{color:var(--dim)}
-  .modes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .mode-card{background:#161927;border:1px solid var(--bd);border-radius:8px;padding:8px}
+  .modes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}   /* minmax(0,..)=내용폭 이하로 축소 허용 — 우측카드 잘림 fix(7/11) */
+  .mode-card{background:#161927;border:1px solid var(--bd);border-radius:8px;padding:8px;min-width:0}
   .mode-card h3{font-size:12px;margin-bottom:5px}
+  .mode-card .kv{flex-wrap:wrap;font-size:11.5px}
+  .mode-card .kv .num{margin-left:auto;text-align:right}
   .pos{color:var(--grn)}.neg{color:var(--red)}
-  .fills{max-height:240px;overflow-y:auto}
-  .logs{max-height:150px;overflow-y:auto;font-size:11px;color:var(--dim)}
+  .fills{max-height:280px;overflow-y:auto;overflow-x:auto}   /* 좁을 땐 가로 스크롤 폴백(틱 칸 잘림 방지, 7/11) */
+  /* 7/13 중앙 반반 분할: 좌=스코어·피처·베이시스(반폭), 우=체결이력이 3칸 높이 전체 */
+  .midsplit{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:stretch}
+  .midsplit>div:first-child .card:last-child{margin-bottom:12px}
+  /* 7/13 밸런스 fix: 이력 카드 높이가 내용에 끌려가며 좌반 밑에 빈칸 생기던 문제 —
+     flex-basis 0으로 내용이 행 높이를 못 키우게 붕괴시키고, 행 높이(=좌반 3칸 합)에 맞춰 내부 스크롤 */
+  .fillcard{display:flex;flex-direction:column;min-height:0;margin-bottom:12px}
+  .fillcard .fills{flex:1 1 0;min-height:260px;max-height:none;overflow-y:auto}
+  @media(max-width:1200px){.midsplit{grid-template-columns:1fr}.fillcard .fills{max-height:280px;min-height:0}}
+  /* ── 7/13 v3: 페이지 스크롤 유지 + 등고 컬럼 — 100vh 잠금 폐기(스크롤 불가·포지션 잘림 문제).
+     원리: .cols(grid)가 3컬럼을 "가장 긴 컬럼" 높이로 stretch → 차이는 리스트형 패널
+     (좌=테이프 / 중=엔진로그·체결이력)만 흡수. 가상 포지션은 전 카드 항상 노출(내부 스크롤 없음).
+     ⚠️특이성: .cols .card(0,2,0)를 이기려면 .cols .card.X 형태 필수(7/13 0높이 붕괴 실측) ── */
+  @media(min-width:1201px){
+    .cols>div{display:flex;flex-direction:column;min-height:0;min-width:0}
+    .cols .card{flex:0 0 auto}
+    .cols .card.tapecard{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+    .cols .tape{flex:1 1 0;max-height:none;min-height:300px}
+    .midsplit{flex:1 1 auto;min-height:0}
+    .midsplit>div:first-child{display:flex;flex-direction:column;min-height:0}
+    .cols .card.logcard{flex:1 1 auto;display:flex;flex-direction:column;min-height:0}
+    .cols .logs{flex:1 1 0;max-height:none;min-height:140px}
+    .fillcard{height:100%;min-height:0}
+    .fillcard .fills{min-height:260px}
+  }
+  .fills td:first-child{color:var(--dim);font-size:11px}
+  .fills .tick{font-weight:700;font-size:12.5px}
+  .kpill{display:inline-block;padding:0 6px;border-radius:7px;font-size:10.5px;font-weight:700;line-height:16px}
+  .k-time{background:rgba(61,214,140,.14);color:var(--grn)}
+  .k-dis{background:rgba(224,90,90,.18);color:var(--red)}
+  .k-rev{background:rgba(224,179,74,.18);color:var(--yel)}
+  .k-etc{background:#1a1d2a;color:var(--dim)}
+  .mpill{display:inline-block;padding:0 5px;border-radius:6px;font-size:10.5px;font-weight:700;background:#1e2233;color:var(--acc);line-height:16px}
+  /* 체결이력 모드탭(7/14) — mpill 톤 유지, 활성만 acc 강조 */
+  .ftabs{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 6px}
+  .ftab{cursor:pointer;padding:1px 8px;border-radius:6px;font-size:10.5px;font-weight:700;background:#1e2233;color:var(--dim);line-height:16px;user-select:none}
+  .ftab.on{color:var(--acc);background:#262b42;box-shadow:inset 0 0 0 1px var(--acc)}
+  /* 히스토리 장시간(세션) 소제목(7/14) — 세션별 손익 합계 표시 */
+  .hist-sess-head{display:flex;justify-content:space-between;align-items:center;margin:8px 0 3px;padding:3px 8px;background:#171b2b;border-radius:6px;font-size:11.5px}
+  .hist-sess-head .sess-name{color:var(--dim);font-weight:700}
+  .mode-card h3 .lbl{display:block;font-size:10px;font-weight:400;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .logs{max-height:320px;overflow-y:auto;font-size:11px;color:var(--dim)}   /* 7/13: 우컬럼 이동하며 확장 */
   .note{font-size:11px;color:var(--yel);margin-top:6px}
   .empty{color:var(--dim);text-align:center;padding:12px}
+  .hist-overlay{display:none;position:fixed;inset:0;background:rgba(4,5,8,.72);z-index:50;align-items:center;justify-content:center;padding:24px}
+  .hist-card{background:var(--card);border:1px solid var(--bd);border-radius:12px;width:100%;max-width:1180px;max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+  .hist-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--bd)}
+  .hist-head h2{font-size:14px;flex:1}
+  .hist-close{cursor:pointer;color:var(--dim);font-size:16px;padding:2px 8px}
+  .hist-body{display:flex;flex:1;min-height:0}
+  .hist-dates{width:200px;flex-shrink:0;border-right:1px solid var(--bd);overflow-y:auto}
+  .hist-date-row{padding:8px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.03);font-size:12px}
+  .hist-date-row:hover{background:#161927}
+  .hist-date-row.on{background:#1a1d2a;border-left:2px solid var(--acc)}
+  .hist-date-row .d{font-weight:700}
+  .hist-detail{flex:1;overflow-y:auto;padding:14px 16px;min-width:0}
+  .hist-mode-sec{margin-top:16px}
+  .hist-mode-sec:first-child{margin-top:0}
+  .hist-mode-head{display:flex;align-items:baseline;gap:10px;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid var(--bd)}
+  .hist-mode-head h4{font-size:12.5px;letter-spacing:.3px}
+  .hist-mode-head .sum{margin-left:auto;font-size:11.5px;color:var(--dim)}
+  .hist-inst-block{margin-top:10px;padding-left:10px;border-left:2px solid var(--bd)}
+  .hist-inst-block:first-child{margin-top:8px}
+  .hist-inst-head{display:flex;align-items:baseline;gap:8px;margin-bottom:4px}
+  .hist-inst-head .inst-name{font-size:11.5px;font-weight:700;color:var(--acc)}
+  .hist-inst-head .sum{margin-left:auto;font-size:11px;color:var(--dim)}
+  .side-pill{display:inline-block;padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700}
+  .side-pill.side-long{background:rgba(224,90,90,.16);color:var(--red)}
+  .side-pill.side-short{background:rgba(91,140,255,.16);color:var(--acc)}
+  .pnl-cell{font-weight:700;font-size:12.5px}
+  .pnl-cell.pos{color:var(--grn)}.pnl-cell.neg{color:var(--red)}.pnl-cell.flat{color:var(--dim)}
+  .trade-row.win{background:rgba(61,214,140,.05)}
+  .trade-row.loss{background:rgba(224,90,90,.05)}
+  .trade-row.open td{color:var(--yel)}
+  .px-arrow{color:var(--dim);margin:0 4px}
 </style>
 </head>
 <body>
@@ -74,6 +147,9 @@
   <span id="connBadge" class="badge b-off">연결 대기</span>
   <span id="bearBadge" class="badge b-bear" style="display:none">BEAR</span>
   <span id="gapBadge" class="badge b-gap" style="display:none">⚡ 변동성 갭</span>
+  <span class="inst" id="histBtn" onclick="toggleHist()">📜 히스토리</span>
+  <a class="inst" href="/rulelab.html" style="text-decoration:none">🔬 Rule Lab</a>
+  <a class="inst" href="/report.html" style="text-decoration:none">📋 리포트</a>
   <span style="margin-left:auto;color:var(--dim);font-size:11px" id="stat">—</span>
 </header>
 
@@ -90,7 +166,7 @@
       <tbody id="dom"><tr><td class="empty" colspan="3">수신 대기</td></tr></tbody></table>
       <div class="kv" style="margin-top:6px"><span class="k">총잔량 매도/매수</span><span class="num" id="totRem">—</span></div>
     </div>
-    <div class="card">
+    <div class="card tapecard">
       <h2>체결 테이프 (FC9)</h2>
       <div class="tape" id="tape"><div class="empty">수신 대기</div></div>
     </div>
@@ -103,45 +179,51 @@
       <canvas id="chart" width="640" height="180" style="width:100%;height:180px"></canvas>
       <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim)"><span id="chartL">—</span><span id="chartR">—</span></div>
     </div>
-    <div class="card">
-      <h2>신호 스코어 (v0 규칙 게이트)</h2>
-      <div class="gauge"><div class="zero"></div><div class="fill" id="scoreFill"></div><div class="val num" id="scoreVal">0.00</div></div>
-      <div style="font-size:11px;color:var(--dim)" id="breakdown">—</div>
-      <div class="note" id="paramsLabel">—</div>
-    </div>
-    <div class="card">
-      <h2>피처 (스트리밍)</h2>
-      <div id="feats"></div>
-      <div class="kv" style="margin-top:6px"><span class="k">mid / micro편차(틱) / 스프레드</span><span class="num" id="midLine">—</span></div>
-      <div class="kv"><span class="k">10초 RV z / OFI 5s z</span><span class="num" id="zLine">—</span></div>
-    </div>
-    <div class="card" id="basisCard">
-      <h2 id="basisTitle">베이시스 (FC9 틱 내장)</h2>
-      <div class="kv"><span class="k" id="basisK1">K200 지수 / 이론가</span><span class="num" id="basis1">—</span></div>
-      <div class="kv"><span class="k" id="basisK2">괴리율 / basis z</span><span class="num" id="basis2">—</span></div>
-      <div class="kv"><span class="k" id="basisK3">시장 BASIS / 이론 BASIS</span><span class="num" id="basis3">—</span></div>
-      <div class="kv"><span class="k">미결제약정 / 체결강도</span><span class="num" id="basis4">—</span></div>
-    </div>
-    <div class="card">
-      <h2>엔진 로그</h2>
-      <div class="logs" id="logs"></div>
+    <!-- 7/13 배치개편: 스코어·피처·베이시스는 반폭이면 충분 → 좌반, 우반은 가상체결이력이 3칸 높이 전체 -->
+    <div class="midsplit">
+      <div>
+        <div class="card">
+          <h2>신호 스코어 (v0 규칙 게이트)</h2>
+          <div class="gauge"><div class="zero"></div><div class="fill" id="scoreFill"></div><div class="val num" id="scoreVal">0.00</div></div>
+          <div style="font-size:11px;color:var(--dim)" id="breakdown">—</div>
+          <div class="note" id="paramsLabel">—</div>
+        </div>
+        <div class="card">
+          <h2>피처 (스트리밍)</h2>
+          <div id="feats"></div>
+          <div class="kv" style="margin-top:6px"><span class="k">mid / micro편차(틱) / 스프레드</span><span class="num" id="midLine">—</span></div>
+          <div class="kv"><span class="k">10초 RV z / OFI 5s z</span><span class="num" id="zLine">—</span></div>
+        </div>
+        <div class="card" id="basisCard">
+          <h2 id="basisTitle">베이시스 (FC9 틱 내장)</h2>
+          <div class="kv"><span class="k" id="basisK1">K200 지수 / 이론가</span><span class="num" id="basis1">—</span></div>
+          <div class="kv"><span class="k" id="basisK2">괴리율 / basis z</span><span class="num" id="basis2">—</span></div>
+          <div class="kv"><span class="k" id="basisK3">시장 BASIS / 이론 BASIS</span><span class="num" id="basis3">—</span></div>
+          <div class="kv"><span class="k">미결제약정 / 체결강도</span><span class="num" id="basis4">—</span></div>
+        </div>
+        <div class="card logcard">
+          <h2>엔진 로그</h2>
+          <div class="logs" id="logs"></div>
+        </div>
+      </div>
+      <div class="card fillcard">
+        <h2>가상 체결 이력</h2>
+        <div class="ftabs" id="ftabs"></div><!-- 모드별 필터 탭(7/14) — 첫 탭 ALL -->
+        <div class="fills">
+          <table>
+            <thead><tr><th>시각</th><th>M</th><th>방향</th><th>유형</th><th>가격</th><th>틱</th></tr></thead>
+            <tbody id="fills"><tr><td class="empty" colspan="6">체결 없음</td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
   <!-- 우: 가상매매 (shadow) -->
   <div>
-    <div class="card">
+    <div class="card poscard">
       <h2>가상 포지션 · PnL (shadow — 실주문 0)</h2>
       <div class="modes" id="modes"></div>
-    </div>
-    <div class="card">
-      <h2>가상 체결 이력</h2>
-      <div class="fills">
-        <table>
-          <thead><tr><th>시각</th><th>M</th><th>방향</th><th>유형</th><th>가격</th><th>틱</th></tr></thead>
-          <tbody id="fills"><tr><td class="empty" colspan="6">체결 없음</td></tr></tbody>
-        </table>
-      </div>
     </div>
     <div class="card">
       <h2>수집 상태</h2>
@@ -153,15 +235,36 @@
   </div>
 </div>
 
+<div class="hist-overlay" id="histPanel">
+  <div class="hist-card">
+    <div class="hist-head">
+      <h2>과거 거래 히스토리</h2>
+      <span class="hist-close" onclick="toggleHist()">✕ 닫기</span>
+    </div>
+    <div class="hist-body">
+      <div class="hist-dates" id="histDates"><div class="empty">불러오는 중</div></div>
+      <div class="hist-detail" id="histDetail"><div class="empty">날짜를 선택하세요</div></div>
+    </div>
+  </div>
+</div>
+
 <script>
 var $=function(id){return document.getElementById(id)};
 var SYM='';   // 선택 종목 (빈값=서버 기본: 국내 미니 우선)
+var SYM_INIT=false; // 첫 응답에서 MNQ 탭 자동 선택(코드 prefix 매칭 — 만기 롤오버 무관)
 function q(){return SYM?('?sym='+encodeURIComponent(SYM)):''}
 function nf(x){return (x==null||isNaN(x))?'—':Number(x).toLocaleString()}
 function f2(x){return (x==null||isNaN(x))?'—':Number(x).toFixed(2)}
 function cls(v){return v>0?'pos':(v<0?'neg':'')}
 
 function render(s){
+  if(!SYM_INIT){
+    SYM_INIT=true;
+    if(SYM===''){
+      var mnq=(s.instruments||[]).filter(function(it){return (it.code||'').indexOf('MNQ')===0})[0];
+      if(mnq){ SYM=mnq.code; return; } // 다음 폴(250ms)부터 MNQ 기준 렌더 — poll()은 in-flight 가드로 직접 호출 불가
+    }
+  }
   var c=s.contract||{};
   // 종목 탭 (초당 수신률 병기)
   var insts=s.instruments||[];
@@ -256,11 +359,18 @@ function render(s){
     ? '당일 차트 — 선물가 <span style="color:var(--acc)">━</span>'
     : '당일 차트 — 선물가 <span style="color:var(--acc)">━</span> · K200 지수 <span style="color:var(--dim)">┄</span>';
   if(ov){
-    $('basisTitle').textContent='베이시스 — 해외선물 N/A (KOSPI200 전용)';
-    $('basisK1').textContent='기초지수 / 이론가';
-    $('basisK2').textContent='괴리율 / basis z';
-    $('basisK3').textContent='시장 BASIS / 이론 BASIS';
-    $('basis1').textContent='—'; $('basis2').textContent='—'; $('basis3').textContent='—';
+    // 해외 basis(v5.28): 엔진이 kasis에 basis(선물−지수×100)를 넣음. 기초지수 = 선물가 − basis 역산.
+    // ⚠️ 관측용(신호 미반영). MES=SPI@SPX는 계좌 데이터권한 부재로 죽은값(고정)일 수 있음 → 라벨로 경고.
+    var uidx=(t2.price!=null&&t2.kasis!=null)?(Number(t2.price)-Number(t2.kasis)):null;
+    var mnq=(c.futcode&&c.futcode.indexOf('MNQ')===0), mes=(c.futcode&&c.futcode.indexOf('MES')===0);
+    var isym=mes?'SPI@SPX (S&P500) ⚠️데이터無':(mnq?'NAS@NDX (나스닥) ✅라이브':'—');
+    $('basisTitle').textContent='베이시스 — 해외 t3518 기초지수 (관측용·신호미반영)';
+    $('basisK1').textContent='기초지수 / 선물가';
+    $('basisK2').textContent='basis(선물−지수) / basis z';
+    $('basisK3').textContent='기초지수 심볼';
+    $('basis1').textContent=(uidx!=null?f2(uidx):'—')+' / '+f2(t2.price);
+    $('basis2').textContent=f2(t2.kasis)+' / '+f2(f.basisZ);
+    $('basis3').textContent=isym;
     $('basis4').textContent=nf(t2.openyak)+' / '+f2(t2.cpower);
   } else {
     $('basisTitle').textContent='베이시스 (FC9 틱 내장)';
@@ -275,17 +385,19 @@ function render(s){
   var modes=sig.modes||[];
   $('modes').innerHTML=modes.map(function(m){
     var p=m.position;
-    return '<div class="mode-card"><h3>모드 '+m.mode+' <span style="color:var(--dim);font-weight:400">'+m.label+'</span></h3>'+
+    // 틱·원화 각각 부호색(7/11) — "틱 초록인데 원화 빨강"(수수료 잠식)이 한눈에 보이게
+    return '<div class="mode-card"><h3>'+m.mode+'<span class="lbl">'+m.label+'</span></h3>'+
       '<div class="kv"><span class="k">포지션</span><span class="num">'+(p?(p.side+' @'+f2(p.entry)+' <span class="'+cls(p.unrealizedTicks)+'">'+Number(p.unrealizedTicks).toFixed(1)+'틱</span>'):'없음')+'</span></div>'+
-      '<div class="kv"><span class="k">누적 PnL</span><span class="num '+cls(m.pnlTicks)+'">'+Number(m.pnlTicks).toFixed(1)+'틱 ('+nf(Math.round(m.pnlKrw))+'원)</span></div>'+
+      '<div class="kv"><span class="k">누적</span><span class="num"><span class="'+cls(m.pnlTicks)+'">'+Number(m.pnlTicks).toFixed(1)+'틱</span> · <span class="'+cls(m.pnlKrw)+'">'+nf(Math.round(m.pnlKrw))+'원</span></span></div>'+
       '<div class="kv"><span class="k">거래/승률</span><span class="num">'+m.trades+'건 / '+Number(m.winRate).toFixed(0)+'%</span></div></div>';
   }).join('');
 
-  // 체결 이력
-  var fills=sig.fills||[];
-  $('fills').innerHTML=fills.length?fills.map(function(x){
-    return '<tr><td class="num" style="color:var(--dim)">'+x.time+'</td><td>'+x.mode+'</td><td class="'+(x.side==='LONG'?'bid':'ask')+'">'+x.side+'</td><td>'+x.kind+'</td><td class="num">'+f2(x.price)+'</td><td class="num '+cls(x.pnlTicks)+'">'+(x.kind==='ENTRY'?'—':Number(x.pnlTicks).toFixed(1))+'</td></tr>';
-  }).join(''):'<tr><td class="empty" colspan="6">체결 없음</td></tr>';
+  // 체결 이력 — 밀리초 제거 + 모드/유형 색상 약칭 필(7/11: 380px 칼럼서 틱 칸 잘리던 문제 fix)
+  // 7/14: 모드별 탭 필터 — lastFills에 보관 후 renderFills()가 fillFilter 적용
+  // 탭은 이력 등장 여부가 아니라 엔진 전체 모드 목록 기준(거래 없어도 탭 노출 — 회원 지적 7/14)
+  lastFills=sig.fills||[];
+  renderFillTabs(modes.map(function(m){return m.mode;}));
+  renderFills();
 
   var logs=s.logs||[];
   $('logs').innerHTML=logs.slice(-30).map(function(l){return '<div>'+l.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</div>'}).join('');
@@ -322,18 +434,205 @@ function drawChart(pts){
   $('chartL').textContent=pts[0].t+' · 고 '+pMax.toFixed(2)+' 저 '+pMin.toFixed(2);
   $('chartR').textContent=pts[pts.length-1].t+' · '+pts[pts.length-1].p.toFixed(2);
 }
+var _pollingChart=false;
 function pollChart(){
-  fetch('/api/chart'+q()).then(function(r){return r.json()}).then(drawChart).catch(function(){});
+  if(_pollingChart) return; _pollingChart=true;
+  fetch('/api/chart'+q()).then(function(r){return r.json()}).then(drawChart).catch(function(){}).then(function(){ _pollingChart=false; });
 }
 
-function poll(){
-  fetch('/api/state'+q()).then(function(r){return r.json()}).then(render).catch(function(){
-    $('connBadge').textContent='API 오류'; $('connBadge').className='badge b-off';
+// ── 히스토리 (과거 거래일 조회, v5.21) ──
+var histDates=[], histSelected=null;
+function toggleHist(){
+  var el=$('histPanel');
+  if(el.style.display==='flex'){ el.style.display='none'; return; }
+  el.style.display='flex';
+  loadHistDates();
+}
+function loadHistDates(){
+  fetch('/api/history').then(function(r){return r.json()}).then(function(d){
+    histDates=d.dates||[];
+    renderHistDates();
+    if(histDates.length && !histSelected) selectHistDate(histDates[0].date);
+  }).catch(function(){ $('histDates').innerHTML='<div class="empty">조회 실패</div>'; });
+}
+function renderHistDates(){
+  $('histDates').innerHTML = histDates.length ? histDates.map(function(x){
+    var on=x.date===histSelected;
+    return '<div class="hist-date-row'+(on?' on':'')+'" onclick="selectHistDate(\''+x.date+'\')">'+
+      '<div class="d">'+x.date+'</div>'+
+      '<div class="num '+cls(x.pnlTicks)+'">'+Number(x.pnlTicks).toFixed(1)+'틱 · '+x.closes+'건</div></div>';
+  }).join('') : '<div class="empty">거래 기록 없음</div>';
+}
+function selectHistDate(date){
+  histSelected=date;
+  renderHistDates();
+  $('histDetail').innerHTML='<div class="empty">불러오는 중</div>';
+  fetch('/api/history/day?date='+encodeURIComponent(date)).then(function(r){return r.json()}).then(renderHistDay).catch(function(){
+    $('histDetail').innerHTML='<div class="empty">조회 실패</div>';
   });
 }
+// ENTRY+청산을 한 거래로 묶기 — 종목×모드별로 순서 보존하며 짝짓기(재시작으로 청산 없이 끊긴 진입은 "보유중"으로 별도 표기)
+function pairTrades(fills){
+  var buckets={}, order=[];
+  fills.forEach(function(x,i){
+    var key=x.futcode+'|'+x.mode;
+    if(!buckets[key]) buckets[key]=[];
+    buckets[key].push(x);
+  });
+  var byMode={};
+  Object.keys(buckets).forEach(function(key){
+    var parts=key.split('|'), futcode=parts[0], mode=parts[1];
+    var list=buckets[key], pending=null;
+    function flushOpen(){
+      if(!pending) return;
+      (byMode[mode]=byMode[mode]||[]).push({futcode:futcode,mode:mode,side:pending.side,entryTime:pending.time,entryPrice:pending.price,exitTime:null,exitPrice:null,kind:'OPEN',pnlTicks:null,_ord:pending._ord});
+      pending=null;
+    }
+    for(var i=0;i<list.length;i++){
+      var x=list[i];
+      if(x.kind==='ENTRY'){ flushOpen(); pending=x; }
+      else if(pending){
+        (byMode[mode]=byMode[mode]||[]).push({futcode:futcode,mode:mode,side:pending.side,entryTime:pending.time,entryPrice:pending.price,exitTime:x.time,exitPrice:x.price,kind:x.kind,pnlTicks:x.pnlTicks,_ord:pending._ord});
+        pending=null;
+      }
+    }
+    flushOpen();
+  });
+  return byMode;
+}
+
+// 청산유형 색상 필 + 모드 약칭(7/11) — 실시간 체결이력·히스토리 공용
+function kindPill(k){
+  var map={TIME:['시간','k-time'],DISASTER:['재해','k-dis'],STOP:['손절','k-dis'],REV:['역전','k-rev'],ENTRY:['진입','k-etc'],EOD:['마감','k-etc'],STALE:['무수신','k-etc'],RESTART:['재기동','k-etc'],OPEN:['보유중','k-etc']};
+  var m=map[k]||[k,'k-etc'];
+  return '<span class="kpill '+m[1]+'">'+m[0]+'</span>';
+}
+function modeShort(m){return m==='TREND+OB'?'T+OB':(m==='TREND'?'TR':(m==='V1-INV'?'INV':(m==='BEST-V1'?'B-V1':(m==='DFADE'?'DF':(m==='DFADE-X'?'DFX':(m==='M30F'?'M30':m))))));}
+
+// ── 체결이력 모드탭(7/14) — 첫 탭 ALL, 이후 엔진 전체 모드 modeOrder 순(거래 없어도 노출) ──
+var fillFilter='ALL', lastFills=[], _tabKey='';
+function renderFillTabs(modeNames){
+  var present={}; modeNames.forEach(function(m){present[m]=1;});
+  var order=['BEST','BEST-V1','GAP','DFADE','DFADE-X','BBZ','M30F','V1.1c','V1','V1-INV','V1.1','V1.2','TREND','TREND+OB'];
+  var ms=order.filter(function(m){return present[m];});
+  Object.keys(present).forEach(function(m){if(order.indexOf(m)<0)ms.push(m);});   // 신규 모드 방어
+  var key=ms.join(',');
+  if(key===_tabKey){return}   // 모드 구성 그대로면 탭 재구축 생략(1s 폴링 깜빡임 방지)
+  _tabKey=key;
+  if(fillFilter!=='ALL'&&ms.indexOf(fillFilter)<0)fillFilter='ALL';
+  $('ftabs').innerHTML='<span class="ftab" data-m="ALL">ALL</span>'+ms.map(function(m){
+    return '<span class="ftab" data-m="'+m+'">'+modeShort(m)+'</span>';}).join('');
+  Array.prototype.forEach.call($('ftabs').children,function(t){
+    t.onclick=function(){fillFilter=t.getAttribute('data-m');setFillTab();renderFills();};});
+  setFillTab();
+}
+function setFillTab(){
+  Array.prototype.forEach.call($('ftabs').children,function(t){
+    t.className='ftab'+(t.getAttribute('data-m')===fillFilter?' on':'');});
+}
+function renderFills(){
+  var fills=fillFilter==='ALL'?lastFills:lastFills.filter(function(x){return x.mode===fillFilter;});
+  $('fills').innerHTML=fills.length?fills.map(function(x){
+    return '<tr><td class="num">'+String(x.time).slice(0,8)+'</td><td><span class="mpill">'+modeShort(x.mode)+'</span></td><td class="'+(x.side==='LONG'?'bid':'ask')+'">'+(x.side==='LONG'?'롱':'숏')+'</td><td>'+kindPill(x.kind)+'</td><td class="num">'+f2(x.price)+'</td><td class="num tick '+cls(x.pnlTicks)+'">'+(x.kind==='ENTRY'?'—':Number(x.pnlTicks).toFixed(1))+'</td></tr>';
+  }).join(''):'<tr><td class="empty" colspan="6">체결 없음</td></tr>';
+}
+function instName(futcode){
+  if(futcode && futcode.indexOf('A05')===0) return '미니 KOSPI200';   // 월물 무관(7/11 fix — 만기 롤오버로 코드가 매월 바뀜)
+  if(futcode && futcode.indexOf('MES')===0) return 'MES';
+  if(futcode && futcode.indexOf('MNQ')===0) return 'MNQ';
+  return futcode || '(미상)';
+}
+function tradeRowsHtml(trades){
+  return '<table><thead><tr><th>진입시각</th><th>방향</th><th>진입가 → 청산가</th><th>유형</th><th>손익</th></tr></thead><tbody>'+
+    trades.map(function(t){
+      var rowCls = t.kind==='OPEN' ? 'open' : (t.pnlTicks>0?'win':(t.pnlTicks<0?'loss':''));
+      var sidePill = '<span class="side-pill '+(t.side==='LONG'?'side-long':'side-short')+'">'+(t.side==='LONG'?'▲ LONG':'▼ SHORT')+'</span>';
+      var pxCell = f2(t.entryPrice)+(t.exitPrice!=null?'<span class="px-arrow">→</span>'+f2(t.exitPrice):'');
+      var pnlCell = t.kind==='OPEN' ? '<span class="pnl-cell flat">보유중</span>' :
+        '<span class="pnl-cell '+(t.pnlTicks>0?'pos':(t.pnlTicks<0?'neg':'flat'))+'">'+(t.pnlTicks>0?'+':'')+Number(t.pnlTicks).toFixed(1)+'틱</span>';
+      return '<tr class="trade-row '+rowCls+'"><td class="num" style="color:var(--dim)">'+t.entryTime+'</td>'+
+        '<td>'+sidePill+'</td><td class="num">'+pxCell+'</td><td>'+kindPill(t.kind)+'</td><td class="num">'+pnlCell+'</td></tr>';
+    }).join('')+'</tbody></table>';
+}
+// 장시간 블록(7/14, rule_lab 세션 정의와 동일 KST 경계) — 진입시각 기준
+function sessOf(t){
+  var h=parseInt(String(t).slice(0,2),10)+parseInt(String(t).slice(3,5),10)/60;
+  if(h>=8.75&&h<15.75)return '주간 08:45~15:45';
+  if(h>=15.75&&h<22.5)return '저녁 15:45~22:30';
+  if(h>=22.5||h<5)return 'US정규 22:30~05:00';
+  return '새벽 05:00~08:45';
+}
+var _histDay=null, histModeFilter='ALL';
+function histTab(m){ histModeFilter=m; renderHistDetail(); }
+function renderHistDay(d){ _histDay=d; histModeFilter='ALL'; renderHistDetail(); }
+function renderHistDetail(){
+  var d=_histDay; if(!d)return;
+  var modes=d.modes||[], fills=d.fills||[];
+  fills.forEach(function(x,i){ x._ord=i; });   // 원 순서 보존(야간세션 자정 넘김 시 시각 문자열 정렬이 틀어지는 것 방지)
+  var byMode=pairTrades(fills);
+  var modeOrder=['BEST','BEST-V1','GAP','DFADE','DFADE-X','BBZ','M30F','V1.1c','V1','V1-INV','V1.1','V1.2','TREND','TREND+OB'];   // BEST=수익조건 합성(7/13) 맨앞   // V1-INV(7/9)·V1.1/V1.2(7/11 부검 개선체, MNQ 전용)   // DFADE=US 수급소진 페이드(7/15)
+
+  // 모드 탭(7/14) — ALL + 그날 존재한 모드(요약 또는 거래) 전부
+  var avail=modeOrder.filter(function(m){ return byMode[m] || modes.some(function(s){return s.mode===m;}); });
+  Object.keys(byMode).forEach(function(m){ if(avail.indexOf(m)<0) avail.push(m); });   // 신규 모드 방어
+  if(histModeFilter!=='ALL'&&avail.indexOf(histModeFilter)<0)histModeFilter='ALL';
+  var tabs='<div class="ftabs" style="margin:0 0 8px">'+
+    '<span class="ftab'+(histModeFilter==='ALL'?' on':'')+'" onclick="histTab(\'ALL\')">ALL</span>'+
+    avail.map(function(m){ return '<span class="ftab'+(histModeFilter===m?' on':'')+'" onclick="histTab(\''+m+'\')">'+modeShort(m)+'</span>'; }).join('')+'</div>';
+
+  var showModes = histModeFilter==='ALL' ? avail : [histModeFilter];
+  var sections = showModes.map(function(modeName){
+    var summary = modes.filter(function(m){ return m.mode===modeName; })[0];
+    var all = (byMode[modeName]||[]).slice().sort(function(a,b){ return a._ord-b._ord; });
+    var head = '<div class="hist-mode-head"><h4>모드 '+modeName+'</h4>'+
+      (summary ? '<span class="sum">누적 <span class="'+cls(summary.pnlTicks)+'">'+Number(summary.pnlTicks).toFixed(1)+'틱</span> · '+summary.trades+'건 · 승률 '+Number(summary.winRate).toFixed(0)+'%</span>' : '<span class="sum">거래 없음</span>')+
+      '</div>';
+    if(!all.length) return '<div class="hist-mode-sec">'+head+'<div class="empty">거래 없음</div></div>';
+
+    var byInst={};
+    all.forEach(function(t){ (byInst[t.futcode]=byInst[t.futcode]||[]).push(t); });
+    var codes = Object.keys(byInst).sort(function(a,b){   // 미니(A05*)→MES→MNQ 순, 월물코드 무관(7/11 fix)
+      function rank(c){ return c.indexOf('A05')===0?0:(c.indexOf('MES')===0?1:2); }
+      return rank(a)-rank(b) || (a<b?-1:1);
+    });
+    var instBlocks = codes.map(function(fc){
+      var trades = byInst[fc];
+      var closed = trades.filter(function(t){ return t.kind!=='OPEN'; });
+      var pnl = closed.reduce(function(s,t){ return s+t.pnlTicks; },0);
+      var wins = closed.filter(function(t){ return t.pnlTicks>0; }).length;
+      var instHead = '<div class="hist-inst-head"><span class="inst-name">'+instName(fc)+'</span>'+
+        '<span class="sum">'+trades.length+'건'+(closed.length?(' · <span class="'+cls(pnl)+'">'+(pnl>0?'+':'')+pnl.toFixed(1)+'틱</span> · 승률 '+Math.round(closed.length?100*wins/closed.length:0)+'%'):'')+'</span></div>';
+      // 장시간(세션) 블록 분할 + 세션별 손익 합계(7/14) — 실제 등장 순서대로
+      var bySess={}, sessOrd={};
+      trades.forEach(function(t){ var sn=sessOf(t.entryTime); (bySess[sn]=bySess[sn]||[]).push(t); if(!(sn in sessOrd)||t._ord<sessOrd[sn])sessOrd[sn]=t._ord; });
+      var sessBlocks=Object.keys(bySess).sort(function(a,b){ return sessOrd[a]-sessOrd[b]; }).map(function(sn){
+        var st=bySess[sn], sc=st.filter(function(t){return t.kind!=='OPEN';});
+        var sp=sc.reduce(function(s,t){return s+t.pnlTicks;},0);
+        var sw=sc.filter(function(t){return t.pnlTicks>0;}).length;
+        var sh='<div class="hist-sess-head"><span class="sess-name">🕐 '+sn+'</span><span class="sum">'+st.length+'건'+
+          (sc.length?(' · 합계 <span class="'+cls(sp)+'">'+(sp>0?'+':'')+sp.toFixed(1)+'틱</span> · 승률 '+Math.round(100*sw/sc.length)+'%'):'')+'</span></div>';
+        return sh+tradeRowsHtml(st);
+      }).join('');
+      return '<div class="hist-inst-block">'+instHead+sessBlocks+'</div>';
+    }).join('');
+    return '<div class="hist-mode-sec">'+head+instBlocks+'</div>';
+  }).join('');
+
+  $('histDetail').innerHTML = '<h2 style="margin-bottom:8px">'+d.date+'</h2>' + tabs + sections;
+}
+
+// 폴링 주기(v5.28): 상태 250ms(4Hz)·차트 2s로 상향해 역동성 강화.
+// in-flight 가드 — 응답이 주기보다 느릴 때 요청이 쌓이지 않게(느린 순간 자동 skip). 저장·계산은 무관(항상 풀실시간).
+var _polling=false;
+function poll(){
+  if(_polling) return; _polling=true;
+  fetch('/api/state'+q()).then(function(r){return r.json()}).then(render).catch(function(){
+    $('connBadge').textContent='API 오류'; $('connBadge').className='badge b-off';
+  }).then(function(){ _polling=false; });
+}
 function pick(code){ SYM=code; poll(); pollChart(); }
-poll(); setInterval(poll, 700);
-pollChart(); setInterval(pollChart, 5000);
+poll(); setInterval(poll, 250);
+pollChart(); setInterval(pollChart, 2000);
 </script>
 </body>
 </html>

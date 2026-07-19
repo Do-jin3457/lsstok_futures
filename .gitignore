@@ -1,10 +1,12 @@
 bin/
 obj/
+packages/
 data_backup/
 *.db
-*.db-wal
 *.db-shm
+*.db-wal
 *.user
 *.suo
 .vs/
+*.bak_*
 .omc/

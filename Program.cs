@@ -67,15 +67,26 @@ namespace LS.Futures
             var restored = recorder.RestoreDay(restoreDate);
             Action<InstrumentPipeline> applyRestore = delegate (InstrumentPipeline pl)
             {
-                double[] rr;
-                if (restored.TryGetValue(pl.Cfg.Code, out rr))
-                    pl.Signals.RestoreDay(rr[0], (int)rr[1], (int)rr[2]);
+                System.Collections.Generic.Dictionary<string, double[]> byMode;
+                if (restored.TryGetValue(pl.Cfg.Code, out byMode))
+                {
+                    double[] rr;
+                    if (byMode.TryGetValue("V1", out rr)) pl.Signals.RestoreDay(rr[0], (int)rr[1], (int)rr[2], rr.Length > 3 ? rr[3] : 0);
+                    // v5.24: TREND/TREND+OB도 V1과 동일하게 복원(그전엔 이 둘만 빠져있어 재시작마다 카드가 0으로 보이던 결함)
+                    // v5.32: 수수료(sumExitPx 4번째 원소)도 함께 복원 — 재기동 후 원화 손익 과대표시 fix(회원 지적 7/11)
+                    foreach (var kv in byMode)
+                        if (kv.Key == "TREND" || kv.Key == "TREND+OB" || kv.Key == "V1-INV" || kv.Key == "V1.1" || kv.Key == "V1.2" || kv.Key == "BEST" || kv.Key == "BEST-V1" || kv.Key == "GAP" || kv.Key == "DFADE" || kv.Key == "DFADE-X" || kv.Key == "M30F" || kv.Key == "V1.1c" || kv.Key == "BBZ")
+                            pl.Signals.RestoreTrendDay(kv.Key, kv.Value[0], (int)kv.Value[1], (int)kv.Value[2], kv.Value.Length > 3 ? kv.Value[3] : 0);
+                }
                 // v5.2: 대시보드 체결내역도 DB에서 재적재(재기동 후 빈 화면 fix)
                 pl.Signals.RestoreFills(recorder.LoadRecentFills(pl.Cfg.Code, restoreDate, 30));
+                // v5.25: 가격버퍼도 즉시 복원 — 안 하면 재시작마다 ER 33분 워밍업을 새로 거쳐 TREND류가 오래 멈춤
+                pl.Signals.SeedMids(recorder.GetRecentMidSeries(pl.Cfg.Code, restoreDate, 36));
             };
 
-            // 해외 2종은 심볼 고정(분기물, --ovs로 교체 가능). ⚠️틱가치 원화환산=환율 1,400 가정(라벨), 수수료 $7.5×2 가정.
-            string ovsArg = GetStrArg(args, "--ovs", "MESU26,MNQU26");
+            // 해외 심볼(분기물, --ovs로 교체 가능). ⚠️틱가치 원화환산=환율 1,400 가정(라벨), 수수료 편도 $1×왕복2(마이크로 e-mini 실측).
+            // 2026-07-09 회원 지시: MES 제외(3일 연속 사실상 flat + 기초지수 SPI@SPX 데이터권한 부재) — 구독·신호·지수조회 전부 중지. 재개 시 --ovs MESU26,MNQU26.
+            string ovsArg = GetStrArg(args, "--ovs", "MNQU26");
             var ovsSymbols = new System.Collections.Generic.List<string>();
             foreach (var symRaw in ovsArg.Split(','))
             {
@@ -89,7 +100,7 @@ namespace LS.Futures
                     Name = (isMnq ? "MNQ " : "MES ") + sym.Substring(3),
                     TickSize = 0.25,
                     TickValueKrw = isMnq ? 700 : 1750,
-                    CommissionRt = 7.5 * 2 * 1400,   // 왕복 정액: 편도 $7.5 × 2 × 환율 1400(가정)
+                    CommissionRt = 1.0 * 2 * 1400,   // 왕복 정액: 편도 $1 × 2 × 환율 1400 — 마이크로 e-mini 실측 수수료(2026-07-07 회원 확정, 종전 $7.5는 7.5배 과다였음)
                     CommissionPct = 0,
                     Overseas = true
                 };
@@ -162,7 +173,9 @@ namespace LS.Futures
                         }
                         else
                         {
-                            // 미니 KOSPI200 근월물 자동 — t8435 MF에서 A05* 첫 항목. 미니는 매월 만기(롤오버 잦음).
+                            // 미니 KOSPI200 근월물 자동 — t8435 MF에서 A05* 중 "만기 안 지난" 첫 항목. 미니는 매월 만기(롤오버 잦음).
+                            // 🔴 2026-07-09 만기일 사고 fix: 마스터가 만기 당일 저녁까지 만기월물(2607)을 첫 항목으로 반환
+                            //   (실측: 만기일 19:56 재기동서 죽은 2607 구독→야간 데이터 0). 만기 = 해당월 둘째 목요일 15:45 컷.
                             bool subscribed = false;
                             _rt.OnDerivMaster += delegate (System.Collections.Generic.List<LS.Futures.Models.T9943Item> items)
                             {
@@ -174,7 +187,11 @@ namespace LS.Futures
                                     return;
                                 }
                                 subscribed = true;
-                                addMini(minis[0].Shcode, minis[0].Hname);
+                                var alive = minis.FindAll(x => !MiniExpired(x.Hname, DateTime.Now));
+                                var pick = alive.Count > 0 ? alive[0] : minis[0];   // 전멸 시 첫 항목 폴백(보수)
+                                if (alive.Count == 0) Log("[boot] ⚠️ 미니 전월물 만기판정 — 마스터 첫 항목 폴백: " + minis[0].Hname);
+                                else if (pick.Shcode != minis[0].Shcode) Log($"[boot] 미니 만기월물 스킵: {minis[0].Hname} → {pick.Hname} 선택 (만기=둘째목요일 15:45)");
+                                addMini(pick.Shcode, pick.Hname);
                             };
                             _rt.RequestDerivMaster("MF");
                         }
@@ -232,6 +249,25 @@ namespace LS.Futures
         /// --probe-master: t9943 마스터를 gubun 값별로 스캔 — 미니 KOSPI200 종목코드 확보용(휴장에도 동작).
         /// 미니 전용 실시간 res가 없어 FC9/FH9 통합 커버로 추정 — 그 전제의 futcode부터 확정한다.
         /// </summary>
+        /// <summary>미니 월물 만기 판정(2026-07-09 fix) — Hname 끝 4자리 yymm 파싱, 만기=해당월 둘째 목요일 15:45.
+        /// t8435 마스터가 만기 당일 저녁까지 만기월물을 첫 항목으로 주므로 지난 월물은 스킵해야 함.
+        /// 형식 파싱 실패 시 false(생존 취급, 보수) — 기존 동작으로 폴백.</summary>
+        private static bool MiniExpired(string hname, DateTime now)
+        {
+            try
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(hname ?? "", @"(\d{2})(\d{2})\s*$");
+                if (!m.Success) return false;
+                int yy = int.Parse(m.Groups[1].Value), mm = int.Parse(m.Groups[2].Value);
+                if (mm < 1 || mm > 12) return false;
+                var first = new DateTime(2000 + yy, mm, 1);
+                int offset = ((int)DayOfWeek.Thursday - (int)first.DayOfWeek + 7) % 7;
+                var expiry = first.AddDays(offset + 7).AddHours(15).AddMinutes(45);   // 둘째 목요일 15:45
+                return now > expiry;
+            }
+            catch { return false; }
+        }
+
         private static void RunProbeMaster()
         {
             Log("[probe] t9943 gubun 스캔 시작");
@@ -370,13 +406,16 @@ namespace LS.Futures
                             Log($"[idxprobe] {sym} → {(okRes ? "OK" : "FAIL")} : {detail}");
                             respSignal.Set();
                         };
+                        // 전체 필드 덤프 × jgbn 전수(0=일/3=분/4=틱) — 어느 조합이 실제 지수레벨을 주는지 확인(2026-07-07)
+                        string[] jgbns = GetStrArg(args, "--jgbns", "0,3,4").Split(',');
                         foreach (var s in syms)
-                        {
-                            respSignal.Reset();
-                            _rt.ProbeIndexQuery(s.Trim());
-                            respSignal.Wait(5000);   // 응답 오면 즉시 다음 심볼(겹침 방지, blind sleep 대신)
-                            Thread.Sleep(300);        // TR 페이싱(초당 5건 제한 회피) 최소 여유
-                        }
+                            foreach (var jg in jgbns)
+                            {
+                                respSignal.Reset();
+                                _rt.ProbeIndexFull(s.Trim(), jg.Trim());
+                                respSignal.Wait(5000);   // 응답 오면 즉시 다음(겹침 방지)
+                                Thread.Sleep(400);        // TR 페이싱(초당 5건 제한 회피)
+                            }
                     }
                     done.Set();
                 }
