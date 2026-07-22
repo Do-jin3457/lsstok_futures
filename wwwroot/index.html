@@ -238,7 +238,7 @@
 <div class="hist-overlay" id="histPanel">
   <div class="hist-card">
     <div class="hist-head">
-      <h2>과거 거래 히스토리</h2>
+      <h2>과거 거래 히스토리 <span style="font-size:11px;font-weight:400;color:#8b949e">— 틱=총장(수수료 미반영) · 실비용=수수료 차감 순손익</span></h2>
       <span class="hist-close" onclick="toggleHist()">✕ 닫기</span>
     </div>
     <div class="hist-body">
@@ -564,6 +564,30 @@ function sessOf(t){
 }
 var _histDay=null, histModeFilter='ALL';
 function histTab(m){ histModeFilter=m; renderHistDetail(); }
+// 실비용 net 병기(7/22): 히스토리의 틱은 gross(수수료 미반영)라 +틱인데 원화 −인 착시 발생 —
+// 표시단에서 수수료 차감분을 병기. MNQ 정액 2,800원/RT=4틱·틱 700원, 미니 정률≈16틱/RT·틱 1,000원(동결 비용 모델). 그 외 종목 미표기.
+function futCost(fc){
+  if(fc.indexOf('A05')===0) return {c:16,k:1000};
+  if(fc.indexOf('MNQ')===0) return {c:4,k:700};
+  return null;
+}
+function netOf(closed){
+  var by={}; closed.forEach(function(t){ (by[t.futcode]=by[t.futcode]||[]).push(t); });
+  var krw=0, nt=0, known=Object.keys(by).length>0;
+  Object.keys(by).forEach(function(fc){
+    var m=futCost(fc); if(!m){ known=false; return; }
+    var g=by[fc].reduce(function(s,t){ return s+t.pnlTicks; },0);
+    var net=g-m.c*by[fc].length;
+    nt+=net; krw+=net*m.k;
+  });
+  return known ? {ticks:nt, krw:krw} : null;
+}
+function netHtml(closed){
+  if(!closed.length) return '';
+  var r=netOf(closed); if(!r) return '';
+  var kk=(r.krw<0?'-':'+')+Math.round(Math.abs(r.krw)).toLocaleString('ko-KR')+'원';
+  return ' · 실비용 <span class="'+cls(r.ticks)+'">'+(r.ticks>0?'+':'')+r.ticks.toFixed(0)+'틱 '+kk+'</span>';
+}
 function renderHistDay(d){ _histDay=d; histModeFilter='ALL'; renderHistDetail(); }
 function renderHistDetail(){
   var d=_histDay; if(!d)return;
@@ -584,8 +608,9 @@ function renderHistDetail(){
   var sections = showModes.map(function(modeName){
     var summary = modes.filter(function(m){ return m.mode===modeName; })[0];
     var all = (byMode[modeName]||[]).slice().sort(function(a,b){ return a._ord-b._ord; });
+    var closedAll = all.filter(function(t){ return t.kind!=='OPEN'; });
     var head = '<div class="hist-mode-head"><h4>모드 '+modeName+'</h4>'+
-      (summary ? '<span class="sum">누적 <span class="'+cls(summary.pnlTicks)+'">'+Number(summary.pnlTicks).toFixed(1)+'틱</span> · '+summary.trades+'건 · 승률 '+Number(summary.winRate).toFixed(0)+'%</span>' : '<span class="sum">거래 없음</span>')+
+      (summary ? '<span class="sum">누적 <span class="'+cls(summary.pnlTicks)+'">'+Number(summary.pnlTicks).toFixed(1)+'틱</span> · '+summary.trades+'건 · 승률 '+Number(summary.winRate).toFixed(0)+'%'+netHtml(closedAll)+'</span>' : '<span class="sum">거래 없음</span>')+
       '</div>';
     if(!all.length) return '<div class="hist-mode-sec">'+head+'<div class="empty">거래 없음</div></div>';
 
@@ -601,7 +626,7 @@ function renderHistDetail(){
       var pnl = closed.reduce(function(s,t){ return s+t.pnlTicks; },0);
       var wins = closed.filter(function(t){ return t.pnlTicks>0; }).length;
       var instHead = '<div class="hist-inst-head"><span class="inst-name">'+instName(fc)+'</span>'+
-        '<span class="sum">'+trades.length+'건'+(closed.length?(' · <span class="'+cls(pnl)+'">'+(pnl>0?'+':'')+pnl.toFixed(1)+'틱</span> · 승률 '+Math.round(closed.length?100*wins/closed.length:0)+'%'):'')+'</span></div>';
+        '<span class="sum">'+trades.length+'건'+(closed.length?(' · <span class="'+cls(pnl)+'">'+(pnl>0?'+':'')+pnl.toFixed(1)+'틱</span> · 승률 '+Math.round(closed.length?100*wins/closed.length:0)+'%'+netHtml(closed)):'')+'</span></div>';
       // 장시간(세션) 블록 분할 + 세션별 손익 합계(7/14) — 실제 등장 순서대로
       var bySess={}, sessOrd={};
       trades.forEach(function(t){ var sn=sessOf(t.entryTime); (bySess[sn]=bySess[sn]||[]).push(t); if(!(sn in sessOrd)||t._ord<sessOrd[sn])sessOrd[sn]=t._ord; });
@@ -610,7 +635,7 @@ function renderHistDetail(){
         var sp=sc.reduce(function(s,t){return s+t.pnlTicks;},0);
         var sw=sc.filter(function(t){return t.pnlTicks>0;}).length;
         var sh='<div class="hist-sess-head"><span class="sess-name">🕐 '+sn+'</span><span class="sum">'+st.length+'건'+
-          (sc.length?(' · 합계 <span class="'+cls(sp)+'">'+(sp>0?'+':'')+sp.toFixed(1)+'틱</span> · 승률 '+Math.round(100*sw/sc.length)+'%'):'')+'</span></div>';
+          (sc.length?(' · 합계 <span class="'+cls(sp)+'">'+(sp>0?'+':'')+sp.toFixed(1)+'틱</span> · 승률 '+Math.round(100*sw/sc.length)+'%'+netHtml(sc)):'')+'</span></div>';
         return sh+tradeRowsHtml(st);
       }).join('');
       return '<div class="hist-inst-block">'+instHead+sessBlocks+'</div>';
